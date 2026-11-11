@@ -13,3 +13,11 @@ A manually triggered sleep cycle reconciles only eligible retained journal mater
 Use operational diagnostics for timing, status, and errors. Keep conversation text and memory payloads out of routine logs and give diagnostic records their own expiry so they cannot become a parallel conversation archive.
 
 The Librarian, sleep cycle, project index, and briefcase loader remain future work.
+
+## Non-blocking memory review
+
+The first sleep-cycle and stewardship milestones must keep conversation, eligible journaling, and proposal generation available while earlier proposals await review. Sleep can produce diary entries and propose FACTS, INSIGHTS, SHORT, and LONG updates without immediate human approval. An invitation to inspect proposals is optional. The user can open the queue when convenient.
+
+Store the review queue durably and recover it independently of the current conversation after a restart. Each proposal has a stable ID, version, destination, source references, reviewer findings, and a history of disposition changes. Support the statuses `pending`, `accepted`, `corrected`, `rejected`, `deferred`, and `superseded`. Record the authority, decision, and resulting memory revision when a change is committed. Link corrections and superseding proposals to earlier versions and preserve the original evidence and findings.
+
+Deterministic validators, local LLMs, hosted models, Cody during development, and the human can contribute findings or recommendations. Commit authority is assigned separately by stewardship policy. Routine updates can proceed under that policy. Ask the human for clarification when ambiguity or risk materially affects the decision, and keep unrelated conversations and memory work moving while the question is open.
