@@ -40,6 +40,21 @@ Each conversation reads up to six current canonical FACTs from Drive alongside t
 
 Reopening the same evidence batch reuses a saved run. A same-page retry of an unconfirmed write reuses its reserved Drive ID and skips the provider call. If the page closes before Drive receives the run, retrying can require another model call. Overlapping runs from different devices can race before Drive lists the new file. Stable proposal IDs keep duplicate proposals out of the displayed queue.
 
+## Awake context
+
+Optional version 1 JSON files in the dedicated Drive folder can seed the context. Each uses `schema_version: 1`. Missing files yield empty sections. Duplicate names or invalid records surface a context error.
+
+| File | Contents |
+| --- | --- |
+| `aida-context-global.json` | Arrays named `long`, `short`, `recent`, `facts`, and `insights`. Each entry has `source` and `text`. |
+| `aida-context-projects.json` | A `projects` array with `id`, `name`, `description`, `status`, and `routingSummary`. Optional `likelyProjectId` is a hint. |
+| `aida-context-project-<id>.json` | The same continuity arrays and a matching `projectId`. |
+| `aida-context-capabilities.json` | A `capabilities` array with `id`, `purpose`, `route`, `availability`, `authorization`, and an `arguments` array of `name`, `description`, and `required`. |
+
+Use a direct request such as “Switch to Atlas” to select a registered project. The conversation always supports continuing and asking for help. Catalog routes are named handoffs for review or confirmation. Execution of external capabilities and automatic discovery remain future work.
+
+The same conversational model call can update working LONG, SHORT, and RECENT. The steward accepts changes on a meaningful rebuild or when the configurable threshold is due. The defaults are four completed turns or growth past 12,000 characters of active continuity and RECENT. **Development evidence** shows the steward receipt. Retained exchanges can store eligible receipts in the journal. A fresh session restores receipts within the recovered window.
+
 ## Online conversation
 
 The same application runs at `https://aristgwetta.github.io/one-aida-many-rooms/` once this update is published. Authorize the existing Google account and enter the existing three-digit Phone OpenAI route code on the first OpenAI turn. The app reads the private `aida-openai-fragments.json` from the existing Aida development Drive folder and assembles the key in page memory. Use a fresh authorization or reload to clear it. The Pages files contain the loader and provider adapter. The Drive file holds the original OpenAI route structure and segments. Keep that file unshared.

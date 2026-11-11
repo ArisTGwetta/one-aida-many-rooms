@@ -1,3 +1,5 @@
+import { validateAwake } from "./awake-context.mjs";
+
 export const conversationVersion = "0.2";
 export class ConversationTransportError extends Error {}
 const recentLimit = 6;
@@ -32,7 +34,9 @@ export function parseConversationResponse(raw, envelope) {
   } catch {
     throw new Error("The conversation provider did not return valid JSON.");
   }
-  if (!hasFields(output, ["version", "reply", "intent", "route", "affect", "candidates", "tools"]) ||
+  const fields = ["version", "reply", "intent", "route", "affect", "candidates", "tools"];
+  if (envelope.context) fields.push("awake");
+  if (!hasFields(output, fields) ||
       output.version !== conversationVersion || !text(output.reply, 4000) ||
       !intents.includes(output.intent) || !routes.includes(output.route) || !validateAffect(output.affect)) {
     throw new Error("The response does not match conversation envelope v0.2.");
@@ -69,11 +73,12 @@ export function parseConversationResponse(raw, envelope) {
   if (!Array.isArray(output.tools) || output.tools.length > 8 || output.tools.some(proposal =>
     !hasFields(proposal, ["tool", "purpose"]) || !available.has(proposal.tool) || !text(proposal.purpose, 500)
   )) throw new Error("Invalid tool proposal.");
+  if (envelope.context) validateAwake(output.awake, envelope);
   return output;
 }
 
 // The provider boundary accepts one envelope and returns JSON text.
-export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [] }) {
+export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [], steward }) {
   let recent = recoveredTurns.flatMap(turn => [turn.user, turn.aida]).slice(-recentLimit);
   let lastOrder = recoveredTurns.reduce((latest, turn) => Math.max(latest, turn.order), 0);
   let affect = { ...initialAffect };
@@ -94,6 +99,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const order = Math.max(Date.parse(startedAt), lastOrder + 1);
         const [saved, canonical] = await Promise.all([memoryStore.recall(), loadCanonicalFacts()]);
         const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
+        const context = steward ? await steward.assemble(recent) : undefined;
         const envelope = {
           version: conversationVersion,
           identity: { name: "Aida", relationship: "The user's ongoing conversational companion." },
@@ -109,7 +115,8 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           },
           affect: { ...affect },
           environment: { recentStorage: recoveredTurns.length ? "drive-and-browser-session" : "browser-session", tools: [] },
-          user
+          user,
+          ...(context ? { context } : {})
         };
         let raw;
         try {
@@ -119,11 +126,12 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           throw new Error("The conversation provider failed. Try again.");
         }
         const response = parseConversationResponse(raw, envelope);
+        const receipt = steward ? steward.apply(envelope, response.awake, keepInContext) : undefined;
         const aida = { source: `turn:${turnId}:aida`, role: "aida", text: response.reply };
         if (keepInContext) recent = [...recent, user, aida].slice(-recentLimit);
         lastOrder = order;
         affect = { ...response.affect };
-        return { envelope, response, turn: { turnId, order, startedAt, completedAt: new Date().toISOString(), user, aida } };
+        return { envelope, response, receipt, turn: { turnId, order, startedAt, completedAt: new Date().toISOString(), user, aida } };
       } finally {
         inFlight = false;
       }

@@ -1,4 +1,5 @@
 import { parseConversationResponse } from "./conversation.mjs";
+import { awakeInstructions, awakeSchema } from "./awake-context.mjs";
 import { maxSleepBytes, parseSleepResponse, sleepInstructions, sleepSchema } from "./sleep-contract.mjs";
 
 export const openAIModel = "gpt-6-luna";
@@ -134,9 +135,11 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
         !Array.isArray(envelope.environment?.tools)) throw new ProviderError("Invalid conversation envelope.");
     const content = JSON.stringify(envelope);
     if (new TextEncoder().encode(content).byteLength > maxEnvelopeBytes) throw new ProviderError("The conversation envelope is too large.");
-    const result = await adapters[provider](model, content, {
-      name: "aida_conversation_v02", instructions, schema, tokens: maxOutputTokens
-    });
+    const format = envelope.context
+      ? { name: "aida_conversation_v02_awake", instructions: `${instructions} ${awakeInstructions}`,
+        schema: object({ ...schema.properties, awake: awakeSchema }), tokens: 2000 }
+      : { name: "aida_conversation_v02", instructions, schema, tokens: maxOutputTokens };
+    const result = await adapters[provider](model, content, format);
     parseConversationResponse(result.raw, envelope);
     return { ...result, provider };
   };

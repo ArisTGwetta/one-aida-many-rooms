@@ -3,6 +3,7 @@ import { createConversationSession, ConversationTransportError } from "./convers
 import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
 import { setupSleepPanel } from "./sleep-panel.mjs";
 import { createSleepStore } from "./sleep.mjs";
+import { createAwakeSteward, createContextSource, journalReceipt } from "./awake-context.mjs";
 
 const byId = id => document.getElementById(id);
 const connect = byId("connect");
@@ -54,6 +55,7 @@ async function run(label, action, target = status) {
 async function setupChat(folderId) {
   const journal = createJournal(folderId, () => token);
   const sleepStore = createSleepStore(folderId, () => token);
+  const contextSource = createContextSource(folderId, () => token);
   let dev;
   let direct;
   let loadOpenAIKey;
@@ -234,6 +236,7 @@ async function setupChat(folderId) {
     showSelection();
     session = createConversationSession({
       memoryStore: store,
+      steward: createAwakeSteward(contextSource, { recoveredTurns: turns }),
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope) {
@@ -309,12 +312,16 @@ async function setupChat(folderId) {
       byId("conversation-evidence").textContent = JSON.stringify({
         ...evidence, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt, destination, proposalId, reviewId, sources }) =>
           ({ source, recordId, savedAt, destination, proposalId, reviewId, sources })),
-        recentMessageCount: result.envelope.memory.recent.length, response: result.response
+        recentMessageCount: result.envelope.memory.recent.length, response: result.response,
+        awakeContext: { projectId: result.envelope.context.currentProjectId, references: result.envelope.context.references },
+        stewardReceipt: result.receipt
       }, null, 2);
       details.hidden = false;
       if (message.value === submitted) message.value = "";
       retention.value = "auto";
       if (disposition === "candidate" || disposition === "provisional") {
+        const receipt = journalReceipt(result, supportingTurn);
+        if (receipt) turn.awakeReceipt = receipt;
         pending = { event: makeJournalEvent(conversationId, turn, disposition, supportingTurn) };
         preceding.expiresAt = pending.event.expiresAt;
         sources = pending.event.turns.flatMap(item => [item.user.source, item.aida.source]);
@@ -333,7 +340,15 @@ async function setupChat(folderId) {
           ? "Exchange excluded from future context and Drive."
           : "Exchange kept in page context only.";
       }
-      return "Reply received.";
+      const outcome = result.receipt.outcome.status;
+      return {
+        confirmation_required: "Capability request recorded. It requires your confirmation.",
+        proposed: "Request proposed for review.",
+        unavailable: "The requested capability is unavailable.",
+        invalid_arguments: "The capability request is missing valid arguments.",
+        needs_clarification: "The request needs clarification.",
+        project_selected: "Project selected for the next turn."
+      }[outcome] ?? "Reply received.";
     }, chatStatus);
   });
   return async () => {
