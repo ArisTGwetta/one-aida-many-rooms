@@ -1,6 +1,6 @@
 # Aida conversation envelope v0.2
 
-Aida assembles the request from her own context. The provider returns one JSON object. The current implementation is exercised with a simulated provider.
+Aida assembles the request from her own context. The provider returns one JSON object.
 
 ## Request
 
@@ -52,3 +52,17 @@ Intent is one of `conversation`, `recall`, `memory_update`, or `tool_request`. T
 10. **Tools** are proposals. An executor would separately verify capability, parameters, and user authority. The prototype executes no proposals.
 
 On a provider error or invalid output, session affect and RECENT stay at the last successful turn. The existing Remember and Recall controls operate independently.
+
+## Memory disposition
+
+This policy guides future retention decisions. The v0.2 request and response shapes stay as documented above. A future contract version may carry an LLM disposition proposal. Aida's memory steward decides what to retain.
+
+| Disposition | Retention |
+| --- | --- |
+| `ephemeral` | Incidental questions and consultations are available in the active conversation. They expire when that conversation ends. |
+| `provisional` | Developing material can be retained temporarily for continuity and review. The steward must assign an expiry when retaining it. At expiry it is discarded unless the steward has explicitly reclassified it. |
+| `candidate` | Meaningful information may be eligible for durable retention after evidence validation and classification to an appropriate destination. |
+
+A conversation can change disposition as it develops. A single important fact, decision, correction, or explicit request to remember can qualify immediately. Conversation length alone never qualifies material for promotion. When a conversation becomes meaningful, retain the relevant supporting context. Incidental questions do not establish user preferences, insights, or profile facts by themselves.
+
+Honor explicit requests not to remember the material, including requests made after an earlier turn. Exclude that material from journaling, candidate promotion, and sleep reconciliation. Sleep considers only eligible retained material. Operational diagnostics should use status, timing, and error metadata and exclude conversation text and memory payloads from routine logging.

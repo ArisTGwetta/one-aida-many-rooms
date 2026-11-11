@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { createProviders, maxEnvelopeBytes, openAIModel, ProviderError } from "./providers.mjs";
 
 const host = "127.0.0.1";
@@ -28,9 +29,14 @@ function send(response, status, body, type = "application/json") {
   response.end(type === "application/json" ? JSON.stringify(body) : body);
 }
 
-const server = createServer({ requestTimeout: 15000 }, async (request, response) => {
+export async function handleRequest(request, response) {
   if (request.headers.host !== authority) return send(response, 403, { error: "Use the loopback URL." });
-  const path = request.url;
+  let path;
+  try {
+    path = new URL(request.url, origin).pathname;
+  } catch {
+    return send(response, 400, { error: "Invalid request URL." });
+  }
   if (request.method === "GET") {
     if (path === "/oauth.config.json") return send(response, 200, config);
     if (path === "/dev-config") return send(response, 200, {
@@ -78,6 +84,9 @@ const server = createServer({ requestTimeout: 15000 }, async (request, response)
   } finally {
     busy = false;
   }
-});
+}
 
-server.listen(port, host, () => console.log(`Aida development server: ${origin}/`));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const server = createServer({ requestTimeout: 15000 }, handleRequest);
+  server.listen(port, host, () => console.log(`Aida development server: ${origin}/`));
+}

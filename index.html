@@ -42,6 +42,14 @@
         </select>
         <label for="model">Model</label>
         <input id="model" maxlength="100" required>
+        <div id="ollama-endpoint-field" hidden>
+          <label for="ollama-endpoint">Ollama endpoint</label>
+          <input id="ollama-endpoint" type="url" maxlength="300" placeholder="https://ollama.example">
+        </div>
+        <div id="route-code-field" hidden>
+          <label for="route-code">OpenAI route code</label>
+          <input id="route-code" type="password" inputmode="numeric" maxlength="3" autocomplete="off">
+        </div>
         <p id="provider-status"></p>
         <div id="transcript" role="log" aria-label="Conversation"></div>
         <label for="message">Message</label>

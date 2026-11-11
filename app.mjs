@@ -10,6 +10,7 @@ const evidence = byId("evidence");
 let token;
 let store;
 let session;
+let browserKey;
 const send = byId("send");
 const localDevelopment = location.origin === "http://127.0.0.1:8787";
 
@@ -27,7 +28,10 @@ async function run(label, action, target = status) {
   try {
     target.textContent = await action();
   } catch (error) {
-    if (error.status === 401) token = undefined;
+    if (error.status === 401) {
+      token = undefined;
+      browserKey = undefined;
+    }
     target.textContent = error.message;
   } finally {
     connect.disabled = false;
@@ -36,18 +40,31 @@ async function run(label, action, target = status) {
   }
 }
 
-async function setupChat() {
-  const configuration = await fetch("./dev-config", { cache: "no-store" });
-  if (!configuration.ok) throw new Error("The local chat server is unavailable.");
-  const dev = await configuration.json();
+async function setupChat(folderId) {
+  let dev;
+  let direct;
+  let loadOpenAIKey;
+  if (localDevelopment) {
+    const configuration = await fetch("./dev-config", { cache: "no-store" });
+    if (!configuration.ok) throw new Error("The local chat server is unavailable.");
+    dev = await configuration.json();
+  } else {
+    const [providers, credentials] = await Promise.all([
+      import("./providers.mjs"), import("./browser-credentials.mjs")
+    ]);
+    direct = providers;
+    loadOpenAIKey = credentials.loadOpenAIKey;
+  }
   const select = byId("provider");
   const model = byId("model");
+  const endpoint = byId("ollama-endpoint");
+  const routeCode = byId("route-code");
   const message = byId("message");
   const transcript = byId("transcript");
   const details = byId("conversation-details");
   const chatStatus = byId("chat-status");
   const preferenceKey = "aida.development.provider";
-  let ollamaModel = dev.ollamaModel;
+  let ollamaModel = dev?.ollamaModel ?? "";
   try {
     const preference = JSON.parse(localStorage.getItem(preferenceKey));
     if (preference?.provider === "ollama") select.value = "ollama";
@@ -64,10 +81,18 @@ async function setupChat() {
   }
   function showSelection() {
     const ollama = select.value === "ollama";
-    model.value = ollama ? ollamaModel : dev.openAIModel;
+    model.value = ollama ? ollamaModel : (dev?.openAIModel ?? direct.openAIModel);
     model.readOnly = !ollama;
+    byId("ollama-endpoint-field").hidden = !ollama || localDevelopment;
+    endpoint.required = ollama && !localDevelopment;
+    endpoint.disabled = !endpoint.required;
+    byId("route-code-field").hidden = ollama || localDevelopment || Boolean(browserKey);
+    routeCode.required = !byId("route-code-field").hidden;
+    routeCode.disabled = !routeCode.required;
     byId("provider-status").textContent = ollama
-      ? (dev.ollamaConfigured ? "Enter a model installed on the configured Ollama server." : "Ollama requires a configured local server endpoint.")
+      ? (localDevelopment && !dev.ollamaConfigured
+        ? "Configure an Ollama endpoint on the development server."
+        : "Ollama receives this turn’s message and memory context at the selected endpoint.")
       : "OpenAI receives this turn’s message and the memory context needed to answer.";
   }
   select.addEventListener("change", () => { showSelection(); savePreference(); });
@@ -83,15 +108,37 @@ async function setupChat() {
     details.hidden = true;
     byId("conversation-evidence").textContent = "";
     chatStatus.textContent = "Enter a message to start.";
+    showSelection();
     session = createConversationSession({
       memoryStore: store,
       async provider(envelope) {
-        const response = await fetch("./dev-chat", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...selection, envelope })
-        });
-        const result = await response.json();
-        if (!response.ok) throw new ConversationTransportError(result.error ?? "The local chat server rejected the request.");
+        const input = { ...selection, envelope };
+        let result;
+        if (localDevelopment) {
+          const response = await fetch("./dev-chat", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input)
+          });
+          result = await response.json();
+          if (!response.ok) throw new ConversationTransportError(result.error ?? "The local chat server rejected the request.");
+        } else {
+          try {
+            const invoke = direct.createProviders({
+              apiKey: selection.provider === "openai" ? browserKey : undefined,
+              ollamaEndpoint: selection.ollamaEndpoint
+            });
+            result = await invoke(input);
+          } catch (error) {
+            if (error instanceof direct.ProviderError) {
+              if (selection.provider === "openai" && error.status === 401) {
+                browserKey = undefined;
+                showSelection();
+              }
+              throw new ConversationTransportError(error.message);
+            }
+            throw error;
+          }
+        }
         evidence = { provider: result.provider, model: result.model, usage: result.usage };
         return result.raw;
       }
@@ -104,6 +151,28 @@ async function setupChat() {
     selection = { provider: select.value, model: model.value.trim() };
     const submitted = message.value;
     run("Reading Drive and preparing a reply…", async () => {
+      if (!localDevelopment && selection.provider === "ollama") {
+        let url;
+        try {
+          url = new URL(endpoint.value);
+        } catch {
+          throw new Error("Enter a valid Ollama endpoint URL.");
+        }
+        if (url.protocol !== "https:" && !(url.protocol === "http:" &&
+            ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) {
+          throw new Error("Use a trusted HTTPS Ollama endpoint or an HTTP loopback endpoint.");
+        }
+        if (url.username || url.password || url.search || url.hash || !["/", "/api/chat"].includes(url.pathname)) {
+          throw new Error("Enter the Ollama origin or /api/chat URL without credentials or query parameters.");
+        }
+        selection.ollamaEndpoint = url.href;
+      }
+      if (!localDevelopment && selection.provider === "openai" && !browserKey) {
+        const code = routeCode.value;
+        routeCode.value = "";
+        browserKey = await loadOpenAIKey(folderId, code, token);
+        showSelection();
+      }
       const result = await session.send(submitted);
       for (const [speaker, text] of [["You", result.envelope.user.text], ["Aida", result.response.reply]]) {
         const line = document.createElement("p");
@@ -148,16 +217,15 @@ try {
   const oauth = await loadGoogle();
   store = createMemoryStore(config.drive.initialMemoryFolderId, () => token);
   let resetChat;
-  if (localDevelopment) {
-    try {
-      resetChat = await setupChat();
-    } catch (error) {
-      byId("chat").hidden = false;
-      byId("chat-status").textContent = error.message;
-    }
+  try {
+    resetChat = await setupChat(config.drive.initialMemoryFolderId);
+  } catch (error) {
+    byId("chat").hidden = false;
+    byId("chat-status").textContent = error.message;
   }
   connect.addEventListener("click", () => run("Waiting for Google authorization…", async () => {
     token = undefined;
+    browserKey = undefined;
     token = await authorize(oauth, config.google);
     try {
       await store.verifyFolder();

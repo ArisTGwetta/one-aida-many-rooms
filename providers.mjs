@@ -70,7 +70,9 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
     if (!response.ok) {
       await response.body?.cancel();
       const detail = response.status === 404 ? " Check the selected model." : "";
-      throw new ProviderError(`${provider} returned HTTP ${response.status}.${detail}`);
+      throw Object.assign(new ProviderError(`${provider} returned HTTP ${response.status}.${detail}`), {
+        status: response.status
+      });
     }
     try {
       return await response.json();
@@ -119,7 +121,7 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
         !Array.isArray(envelope.memory?.facts) || !Array.isArray(envelope.memory?.recent) ||
         !Array.isArray(envelope.environment?.tools)) throw new ProviderError("Invalid conversation envelope.");
     const content = JSON.stringify(envelope);
-    if (Buffer.byteLength(content) > maxEnvelopeBytes) throw new ProviderError("The conversation envelope is too large.");
+    if (new TextEncoder().encode(content).byteLength > maxEnvelopeBytes) throw new ProviderError("The conversation envelope is too large.");
     const result = await adapters[provider](model, content);
     parseConversationResponse(result.raw, envelope);
     return { ...result, provider };

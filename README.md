@@ -16,7 +16,15 @@ The development evidence panel shows the Drive source and timestamp, the structu
 
 To enable Ollama, set `AIDA_OLLAMA_ENDPOINT` to a trusted HTTP(S) server origin or its `/api/chat` URL and optionally set `AIDA_OLLAMA_MODEL` before starting the server. Select Ollama in the page and enter an installed model. A network endpoint receives the conversation context. Selection is stored as a browser preference and changing it preserves the current chat. Reloading clears the chat.
 
-For online operation, the legacy Phone fragment flow kept the provider key out of static source, but assembled it in the browser. A protected hosted intermediary can keep that key server-side and work without the local machine. It would need caller authentication and usage limits. The loopback transport is for development. See [the intended memory lifecycle](memory-lifecycle.md) for durable context plans.
+See [the intended memory lifecycle](memory-lifecycle.md) for durable context plans.
+
+## Online conversation
+
+The same application runs at `https://aristgwetta.github.io/one-aida-many-rooms/` once this update is published. Authorize the existing Google account and enter the existing three-digit Phone OpenAI route code on the first OpenAI turn. The app reads the private `aida-openai-fragments.json` from the existing Aida development Drive folder and assembles the key in page memory. Use a fresh authorization or reload to clear it. The Pages files contain the loader and provider adapter. The Drive file holds the original OpenAI route structure and segments. Keep that file unshared.
+
+Scrambling is not encryption. Browser code, extensions, and developer tools can access the reconstructed key during use. This direct-call prototype accepts that tradeoff. OpenAI recommends keeping secret keys on a server. A protected hosted intermediary would reduce browser exposure and would need caller authentication and usage limits. The loopback transport remains available for development.
+
+OpenAI is the default. To use Ollama online, select it and enter a trusted HTTPS endpoint or a local HTTP loopback endpoint and installed model. The browser must be able to reach the endpoint, and Ollama must allow the Pages origin through CORS. Browser network policies can also restrict local endpoints. Ollama receives the selected turn's context using the same envelope as OpenAI. The OpenAI key is sent only to OpenAI.
 
 ## Supervised live test
 
