@@ -1,0 +1,5 @@
+/oauth.config.local.json
+/.env
+/.env.*
+/credentials.local.json
+/token.local.json

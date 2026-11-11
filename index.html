@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aida · First Memory</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Aida</h1>
+      <p>Save one fact to Google Drive and recall it from another device.</p>
+    </header>
+    <form>
+      <button id="connect" type="button" disabled>Authorize Google Drive</button>
+      <label for="memory">What should Aida remember?</label>
+      <textarea id="memory" rows="4" maxlength="4000" required></textarea>
+      <div class="actions">
+        <button id="remember" disabled>Remember</button>
+        <button id="recall" type="button" disabled>Recall</button>
+      </div>
+      <p id="status" role="status">Loading configuration…</p>
+    </form>
+    <section id="evidence" hidden aria-labelledby="evidence-title">
+      <h2 id="evidence-title">Drive evidence</h2>
+      <dl>
+        <dt>Drive file ID</dt><dd id="file-id"></dd>
+        <dt>Saved at (UTC)</dt><dd id="saved-at"></dd>
+      </dl>
+      <pre id="record"></pre>
+    </section>
+  </main>
+</body>
+</html>
