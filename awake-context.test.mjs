@@ -27,6 +27,7 @@ function fixture(docs = files) {
     source: createContextSource("fixture-folder", () => "fixture-token", async (url, options) => {
       assert.equal(options.method, undefined);
       const parsed = new URL(url);
+      if (parsed.pathname.endsWith("/fixture-folder")) return Response.json({ id: "fixture-folder" });
       if (parsed.searchParams.has("q")) {
         const query = parsed.searchParams.get("q");
         assert.match(query, /^'fixture-folder' in parents and trashed = false/);
@@ -35,7 +36,9 @@ function fixture(docs = files) {
         return Response.json({ files: docs[name] ? [{ id: name.replace(/\.json$/, "") }] : [] });
       }
       const id = parsed.pathname.split("/").at(-1);
-      return Response.json({ schema_version: 1, ...docs[id + ".json"] });
+      const doc = docs[id + ".json"];
+      const seed = doc.projects || doc.capabilities ? {} : { long: [], short: [], recent: [], facts: [], insights: [] };
+      return Response.json({ schema_version: 1, ...seed, ...doc });
     })
   };
 }
@@ -177,4 +180,82 @@ test("OpenAI and Ollama opt into the same v0.2 awake response schema", async () 
   });
   await provider({ provider: "openai", model: openAIModel, envelope });
   await provider({ provider: "ollama", model: "fixture", envelope });
+});
+
+test("owned context initialization survives interruption and flags missing, malformed, duplicate and inaccessible records", async () => {
+  const folder = "fixture-folder";
+  const properties = {};
+  const docs = new Map();
+  let nextId = 0;
+  let failUpload = true;
+  const writes = [];
+  const open = () => createContextSource(folder, () => "fixture-token", async (input, options) => {
+    const url = new URL(input);
+    const id = url.pathname.split("/").at(-1);
+    if (id === folder) {
+      if (options.method === "PATCH") Object.assign(properties, JSON.parse(options.body).appProperties);
+      return Response.json({ id: folder, name: "AIDA — ONE AIDA MANY ROOMS — DEV",
+        mimeType: "application/vnd.google-apps.folder", trashed: false, appProperties: properties });
+    }
+    if (id === "generateIds") return Response.json({ ids: [`file-${++nextId}`] });
+    if (url.pathname.startsWith("/upload/")) {
+      if (failUpload) {
+        failUpload = false;
+        throw new Error("connection lost before write");
+      }
+      const boundary = options.headers["Content-Type"].split("boundary=")[1];
+      const parts = options.body.split("--" + boundary);
+      const [metadata, record] = parts.slice(1, 3).map(part => JSON.parse(part.split("\r\n\r\n")[1]));
+      assert.deepEqual(metadata.parents, [folder]);
+      assert.equal(metadata.appProperties.aidaMemory, "context-v1");
+      writes.push(metadata.name);
+      docs.set(metadata.id, { ...metadata, record });
+      return Response.json({ id: metadata.id });
+    }
+    if (url.searchParams.has("q")) {
+      assert.match(url.searchParams.get("q"), /^'fixture-folder' in parents and trashed = false/);
+      const name = /name = '([^']+)'/.exec(url.searchParams.get("q"))[1];
+      return Response.json({ files: [...docs.values()].filter(file => file.name === name).map(file => ({ id: file.id })) });
+    }
+    const doc = docs.get(id);
+    return doc?.denied ? new Response(null, { status: 403 }) : Response.json(doc.record);
+  });
+  const before = await open().load();
+  assert.equal(before.initialized, false);
+  assert.equal(before.capabilities.length, 2);
+  assert.ok(Object.values(before.records).every(id => id === null));
+  assert.equal(writes.length, 0);
+  await assert.rejects(open().initialize(), /reach Google Drive/);
+  const initialized = await open().initialize();
+  assert.equal(initialized.initialized, true);
+  assert.equal(nextId, 3);
+  assert.equal(writes.length, 3);
+  assert.deepEqual((await open().initialize()).records, initialized.records);
+  assert.equal(writes.length, 3);
+  assert.deepEqual(initialized.global, { long: [], short: [], recent: [], facts: [], insights: [] });
+
+  const catalog = docs.get(initialized.records["aida-context-projects.json"]);
+  catalog.record.projects.push(files["aida-context-projects.json"].projects[0]);
+  await assert.rejects(open().project("atlas"), /Project context is missing/);
+  const created = await open().initializeProject("atlas");
+  assert.deepEqual(created.continuity, initialized.global);
+  assert.deepEqual(await open().initializeProject("atlas"), created);
+  assert.equal(writes.length, 4);
+  docs.delete(created.reference.replace("drive:", ""));
+  await assert.rejects(open().initializeProject("atlas"), /Expected Drive context record is missing/);
+  assert.equal(writes.length, 4);
+
+  const globalId = initialized.records["aida-context-global.json"];
+  const global = docs.get(globalId);
+  docs.set("duplicate", { ...global, id: "duplicate" });
+  await assert.rejects(open().load(), /ambiguous.*global/);
+  docs.delete("duplicate");
+  global.denied = true;
+  await assert.rejects(open().load(), /Cannot read.*global.*refused/);
+  global.denied = false;
+  delete global.record.short;
+  await assert.rejects(open().load(), /Invalid short context/);
+  docs.delete(globalId);
+  await assert.rejects(open().initialize(), /Expected Drive context record is missing.*global/);
+  assert.equal(writes.length, 4);
 });

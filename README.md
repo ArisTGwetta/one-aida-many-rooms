@@ -42,16 +42,18 @@ Reopening the same evidence batch reuses a saved run. A same-page retry of an un
 
 ## Awake context
 
-Optional version 1 JSON files in the dedicated Drive folder can seed the context. Each uses `schema_version: 1`. Missing files yield empty sections. Duplicate names or invalid records surface a context error.
+Use **Drive context records → Check context records** after authorizing Drive. **Initialize empty context records** creates the three base files below. Each uses `schema_version: 1`. It records their Drive file IDs and initialization state in the dedicated folder's app properties. Existing valid files are adopted in place. A first-time missing file is expected. After initialization, missing files, changed IDs, duplicates, malformed content, and access errors surface explicitly. Authorization and refresh only read context. Start initialization from one device at a time.
 
 | File | Contents |
 | --- | --- |
-| `aida-context-global.json` | Arrays named `long`, `short`, `recent`, `facts`, and `insights`. Each entry has `source` and `text`. |
+| `aida-context-global.json` | Arrays named `long`, `short`, `recent`, `facts`, and `insights`. Each starts empty. Each later entry has `source` and `text`. |
 | `aida-context-projects.json` | A `projects` array with `id`, `name`, `description`, `status`, and `routingSummary`. Optional `likelyProjectId` is a hint. |
 | `aida-context-project-<id>.json` | The same continuity arrays and a matching `projectId`. |
 | `aida-context-capabilities.json` | A `capabilities` array with `id`, `purpose`, `route`, `availability`, `authorization`, and an `arguments` array of `name`, `description`, and `required`. |
 
 Use a direct request such as “Switch to Atlas” to select a registered project. The conversation always supports continuing and asking for help. Catalog routes are named handoffs for review or confirmation. Execution of external capabilities and automatic discovery remain future work.
+
+When registering a new project in the Drive catalog, enter its stable ID under **Drive context records** and select **Initialize project continuity**. This creates the corresponding version 1 file with that ID and five empty arrays. Initialization verifies writes by reading the files and folder metadata back from Drive.
 
 The same conversational model call can update working LONG, SHORT, and RECENT. The steward accepts changes on a meaningful rebuild or when the configurable threshold is due. The defaults are four completed turns or growth past 12,000 characters of active continuity and RECENT. **Development evidence** shows the steward receipt. Retained exchanges can store eligible receipts in the journal. A fresh session restores receipts within the recovered window.
 

@@ -79,6 +79,19 @@
         </div>
         <pre id="journal-records" hidden></pre>
       </details>
+      <details id="context-records">
+        <summary>Drive context records</summary>
+        <fieldset id="context-controls" disabled>
+          <legend>Context initialization</legend>
+          <button id="context-check" type="button">Check context records</button>
+          <button id="context-init" type="button">Initialize empty context records</button>
+          <label for="context-project-id">Registered project ID</label>
+          <input id="context-project-id" maxlength="64">
+          <button id="context-project-init" type="button">Initialize project continuity</button>
+          <p id="context-status" role="status"></p>
+          <pre id="context-evidence" hidden></pre>
+        </fieldset>
+      </details>
       <details id="sleep-panel">
         <summary>Sleep and memory proposals</summary>
         <fieldset id="sleep-controls" disabled>

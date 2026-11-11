@@ -40,6 +40,13 @@ const builtins = [
   { id: "just_keep_talking", purpose: "Continue conversation without an external action.", arguments: [], availability: "available", authorization: "conversation", route: "conversation" },
   { id: "ask_for_help", purpose: "Explain uncertainty or ask the user for help.", arguments: [], availability: "available", authorization: "conversation", route: "clarification" }
 ];
+const emptyContinuity = () => Object.fromEntries(layers.map(layer => [layer, []]));
+const ownedRecords = [
+  ["ctxGlobalV1", "aida-context-global.json", emptyContinuity, continuity],
+  ["ctxProjectsV1", "aida-context-projects.json", () => ({ projects: [] }), doc => catalog(doc, "projects")],
+  ["ctxCapabilitiesV1", "aida-context-capabilities.json", () => ({ capabilities: [] }), doc => catalog(doc, "capabilities")]
+];
+const initializedKey = "aidaContextInitialized";
 
 function list(value, max, label) {
   if (!Array.isArray(value) || value.length > max) throw new Error(`Invalid ${label}.`);
@@ -47,7 +54,7 @@ function list(value, max, label) {
 }
 
 function continuity(doc) {
-  return Object.fromEntries(layers.map(layer => [layer, list(doc?.[layer] ?? [], 4, `${layer} context`).map(entry => {
+  return Object.fromEntries(layers.map(layer => [layer, list(doc ? doc[layer] : [], 4, `${layer} context`).map(entry => {
     if (!bounded(entry?.source, 150) || !bounded(entry?.text, 400)) throw new Error("Invalid continuity entry.");
     return { source: entry.source, text: entry.text };
   })]));
@@ -55,7 +62,7 @@ function continuity(doc) {
 
 function catalog(doc, kind) {
   const seen = new Set(kind === "capabilities" ? builtins.map(item => item.id) : []);
-  return list(doc?.[kind] ?? [], 12, kind).map(entry => {
+  return list(doc ? doc[kind] : [], 12, kind).map(entry => {
     if (!stableId(entry?.id) || seen.has(entry.id)) throw new Error(`Invalid or duplicate ${kind} ID.`);
     seen.add(entry.id);
     if (kind === "projects") {
@@ -81,39 +88,127 @@ function catalog(doc, kind) {
 
 export function createContextSource(folderId, token, fetchRequest = fetch) {
   const drive = createDriveClient(folderId, token, fetchRequest);
-  async function read(name) {
+  let revision = 0;
+  async function read(name, expectedId = null) {
     const query = new URLSearchParams({
       q: `'${folderId}' in parents and trashed = false and mimeType = 'application/json' and name = '${name}'`,
       fields: "files(id),nextPageToken,incompleteSearch", pageSize: "2"
     });
     const page = await drive.list(query);
     if (page?.incompleteSearch || page?.nextPageToken || !Array.isArray(page?.files) || page.files.length > 1) {
-      throw new Error("Drive context lookup is incomplete or ambiguous.");
+      throw new Error(`Drive context lookup is incomplete or ambiguous for ${name}.`);
     }
-    if (!page.files.length) return null;
+    if (!page.files.length) {
+      if (expectedId) throw new Error(`Expected Drive context record is missing: ${name}.`);
+      return null;
+    }
     const { id } = page.files[0];
-    const doc = await drive.readJson(id);
-    if (doc?.schema_version !== 1) throw new Error("Unsupported Drive context version.");
-    return { doc, ref: `drive:${id}` };
+    if (expectedId && id !== expectedId) throw new Error(`Drive context file ID changed for ${name}.`);
+    let doc;
+    try {
+      doc = await drive.readJson(id);
+    } catch (error) {
+      throw Object.assign(new Error(`Cannot read ${name}. ${error.message}`), { status: error.status });
+    }
+    if (doc?.schema_version !== 1) throw new Error(`Unsupported Drive context version for ${name}.`);
+    return { doc, id, ref: `drive:${id}` };
   }
-  return {
-    async load() {
-      const [global, projects, capabilities] = await Promise.all([
-        read("aida-context-global.json"), read("aida-context-projects.json"), read("aida-context-capabilities.json")
-      ]);
-      const projectEntries = catalog(projects?.doc, "projects");
-      return { global: continuity(global?.doc), projects: projectEntries,
-        likelyProjectId: projectEntries.find(entry => entry.id === projects?.doc.likelyProjectId)?.id ?? null,
-        capabilities: [...builtins, ...catalog(capabilities?.doc, "capabilities")],
-        references: [global?.ref, projects?.ref, capabilities?.ref].filter(Boolean) };
+
+  function readyId(properties, key, name) {
+    const id = properties[key];
+    if (typeof id !== "string" || !/^[\w-]+$/.test(id)) {
+      throw new Error(`Missing or invalid initialization reference for ${name}.`);
+    }
+    return id;
+  }
+
+  async function ensure(properties, [key, name, seed, validate]) {
+    const existing = await read(name, null);
+    if (existing) {
+      if (properties[key] && existing.id !== properties[key]) throw new Error(`Drive context file ID changed for ${name}.`);
+      validate(existing.doc);
+      if (!properties[key]) return drive.setFolderProperties({ [key]: existing.id });
+      return properties;
+    }
+    const id = properties[key] ? readyId(properties, key, name) : await drive.generateId();
+    // Reserve the ID in Drive before uploading. A fresh browser can finish an interrupted initialization.
+    if (!properties[key]) properties = await drive.setFolderProperties({ [key]: id });
+    const doc = { schema_version: 1, ...seed() };
+    await drive.uploadJson(id, name, { aidaMemory: "context-v1" }, doc);
+    const saved = await drive.readJson(id);
+    if (JSON.stringify(saved) !== JSON.stringify(doc)) throw new Error(`Drive readback did not match ${name}.`);
+    validate(saved);
+    return properties;
+  }
+
+  async function load() {
+    const properties = await drive.folderProperties();
+    if (properties[initializedKey] && properties[initializedKey] !== "1") {
+      throw new Error("Unknown Drive context initialization version.");
+    }
+    const initialized = properties[initializedKey] === "1";
+    const [global, projects, capabilities] = await Promise.all(ownedRecords.map(([key, name]) =>
+      read(name, initialized ? readyId(properties, key, name) : null)));
+    const projectEntries = catalog(projects?.doc, "projects");
+    return { global: continuity(global?.doc), projects: projectEntries,
+      likelyProjectId: projectEntries.find(entry => entry.id === projects?.doc.likelyProjectId)?.id ?? null,
+      capabilities: [...builtins, ...catalog(capabilities?.doc, "capabilities")],
+      references: [global?.ref, projects?.ref, capabilities?.ref].filter(Boolean),
+      initialized, records: Object.fromEntries(ownedRecords.map(([, name], index) =>
+        [name, [global, projects, capabilities][index]?.id ?? null])) };
+  }
+
+  const source = {
+    get revision() { return revision; },
+    load,
+    async initialize() {
+      await drive.verifyFolder();
+      let properties = await drive.folderProperties();
+      if (properties[initializedKey]) return load();
+      for (const record of ownedRecords) properties = await ensure(properties, record);
+      await Promise.all(ownedRecords.map(([key, name]) => read(name, properties[key])));
+      await drive.setFolderProperties({ [initializedKey]: "1" });
+      const result = await load();
+      revision++;
+      return result;
+    },
+    async initializeProject(id) {
+      if (!stableId(id)) throw new Error("Enter a valid registered project ID.");
+      await drive.verifyFolder();
+      const base = await load();
+      if (!base.initialized || !base.projects.some(item => item.id === id)) {
+        throw new Error("Initialize the context and register this project in the Drive catalog first.");
+      }
+      const key = `ctxProject-${id}`;
+      const ready = `ctxReady-${id}`;
+      const name = `aida-context-project-${id}.json`;
+      const properties = await drive.folderProperties();
+      if (!properties[ready]) {
+        await ensure(properties, [key, name, () => ({ projectId: id, ...emptyContinuity() }), doc => {
+          if (doc.projectId !== id) throw new Error("Project context ID mismatch.");
+          continuity(doc);
+        }]);
+        const pinned = await drive.folderProperties();
+        await read(name, readyId(pinned, key, name));
+        await drive.setFolderProperties({ [ready]: "1" });
+      }
+      const result = await source.project(id);
+      revision++;
+      return result;
     },
     async project(id) {
       if (!stableId(id)) throw new Error("Invalid project context ID.");
-      const result = await read(`aida-context-project-${id}.json`);
+      const properties = await drive.folderProperties();
+      const name = `aida-context-project-${id}.json`;
+      const result = await read(name, properties[`ctxReady-${id}`] ? readyId(properties, `ctxProject-${id}`, name) : null);
+      if (!result && properties[initializedKey] === "1") {
+        throw new Error(`Project context is missing: ${name}. Initialize the registered project before opening it.`);
+      }
       if (result && result.doc.projectId !== id) throw new Error("Project context ID mismatch.");
       return { continuity: continuity(result?.doc), reference: result?.ref ?? null };
     }
   };
+  return source;
 }
 
 export function validateAwake(awake, envelope) {
@@ -172,6 +267,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   let count = 0;
   let refreshNext = false;
   let sizeAtRefresh = 0;
+  let sourceRevision;
   const working = new Map();
 
   function track(key, seed) {
@@ -202,8 +298,9 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
   return {
     async assemble(recent) {
-      if (!base || refreshNext) {
+      if (!base || refreshNext || sourceRevision !== source.revision) {
         base = await source.load();
+        sourceRevision = source.revision;
         if (activeId && !base.projects.some(entry => entry.id === activeId)) activeId = null;
         project = undefined;
         refreshNext = false;

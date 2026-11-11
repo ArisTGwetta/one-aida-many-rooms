@@ -108,6 +108,21 @@ export function createDriveClient(folderId, token, fetchRequest = fetch) {
 
   return {
     verifyFolder,
+    async folderProperties() {
+      const folder = await request(`${api}/files/${folderId}?fields=id,appProperties`);
+      if (folder.id !== folderId) throw new Error("Drive context folder identity mismatch.");
+      return folder.appProperties ?? {};
+    },
+    async setFolderProperties(appProperties) {
+      await request(`${api}/files/${folderId}?fields=id,appProperties`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ appProperties })
+      });
+      const saved = await this.folderProperties();
+      if (Object.entries(appProperties).some(([key, value]) => saved[key] !== value)) {
+        throw new Error("Context initialization metadata could not be verified in Drive.");
+      }
+      return saved;
+    },
     list: query => request(`${api}/files?${query}`),
     async generateId() {
       const { ids } = await request(`${api}/files/generateIds?count=1&space=drive`);

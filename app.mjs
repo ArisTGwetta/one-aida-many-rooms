@@ -56,6 +56,23 @@ async function setupChat(folderId) {
   const journal = createJournal(folderId, () => token);
   const sleepStore = createSleepStore(folderId, () => token);
   const contextSource = createContextSource(folderId, () => token);
+  const contextStatus = byId("context-status");
+  const contextEvidence = byId("context-evidence");
+  function showContextRecords(result) {
+    contextEvidence.textContent = JSON.stringify(result.records, null, 2);
+    contextEvidence.hidden = false;
+    return result.initialized ? "Context records verified in Drive." : "First-time context initialization is available.";
+  }
+  byId("context-check").addEventListener("click", () => run("Checking context records…", async () =>
+    showContextRecords(await contextSource.load()), contextStatus));
+  byId("context-init").addEventListener("click", () => run("Initializing context records…", async () =>
+    showContextRecords(await contextSource.initialize()), contextStatus));
+  byId("context-project-init").addEventListener("click", () => run("Initializing project continuity…", async () => {
+    const result = await contextSource.initializeProject(byId("context-project-id").value.trim());
+    contextEvidence.textContent = result.reference;
+    contextEvidence.hidden = false;
+    return "Project continuity verified in Drive.";
+  }, contextStatus));
   let dev;
   let direct;
   let loadOpenAIKey;
@@ -93,6 +110,7 @@ async function setupChat(folderId) {
   let sources = [];
   canSend = () => Boolean(session && !pending);
   refreshJournalControls = () => {
+    byId("context-controls").disabled = running || !token;
     byId("sleep-controls").disabled = running || !token;
     for (const id of ["journal-resume", "journal-new", "journal-inspect", "journal-older"]) {
       byId(id).disabled = running || !token || Boolean(pending);
@@ -352,6 +370,8 @@ async function setupChat(folderId) {
     }, chatStatus);
   });
   return async () => {
+    contextStatus.textContent = contextEvidence.textContent = "";
+    contextEvidence.hidden = true;
     clearSleepPanel();
     if (pending) {
       journalStatus.textContent = "Retry the unconfirmed journal save.";
