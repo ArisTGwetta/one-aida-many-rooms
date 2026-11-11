@@ -10,7 +10,7 @@ Aida assembles the request from her own context. The provider returns one JSON o
 | `identity` | Aida's name and relationship context, owned by the application. |
 | `memory.long`, `memory.short` | Durable background and current working context, respectively. |
 | `memory.facts`, `memory.insights` | Evidence-backed statements and separately labeled interpretations. |
-| `memory.recent` | Chronological conversation or activity entries. The prototype supplies up to six messages from the current browser session. |
+| `memory.recent` | Chronological conversation entries. Up to three exchanges from the current conversation, starting with eligible Drive journal records and then incorporating page activity. |
 | `affect` | Previous affective position. The first request uses a calm baseline. |
 | `environment` | Session storage context and the list of available tool names. The prototype advertises no tools. |
 | `user` | Current user message, with a request-visible source reference. |
@@ -40,7 +40,7 @@ Intent is one of `conversation`, `recall`, `memory_update`, or `tool_request`. T
 
 ## Stewardship rules
 
-1. **RECENT** records actual events in order. Append the submitted user message and delivered reply after a successful turn. In the prototype this window resets when the session ends. Future durable activity entries must identify what actually happened and where the evidence lives.
+1. **RECENT** records actual events in order. Append the submitted user message and delivered reply after a successful turn, subject to the user's opt-out. Eligible exchanges can be recovered from the Drive journal. Each side has a stable `turn:<turn-id>:<role>` source reference.
 2. **SHORT** develops from salient RECENT context such as current goals, decisions, or open threads. Propose a concise update when it helps the next conversation. A later steward can retire stale context.
 3. **LONG** develops from durable information or recurring, supported history. Propose changes when their lasting relevance is clear and cite the evidence for promotion.
 4. **FACTS** require source evidence. Attribute user statements to the user when appropriate. A correction cites both its new evidence and the previous item via `supersedes`. A steward should resolve the conflict and retain provenance before changing durable memory.
@@ -55,7 +55,7 @@ On a provider error or invalid output, session affect and RECENT stay at the las
 
 ## Memory disposition
 
-This policy guides future retention decisions. The v0.2 request and response shapes stay as documented above. A future contract version may carry an LLM disposition proposal. Aida's memory steward decides what to retain.
+The v0.2 request and response shapes stay as documented above. The current journal uses the user's per-turn choice and a narrow recognition of explicit remember and opt-out language. A future contract version may carry an LLM disposition proposal. Aida's memory steward decides what to retain.
 
 | Disposition | Retention |
 | --- | --- |

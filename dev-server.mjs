@@ -10,7 +10,7 @@ const origin = `http://${authority}`;
 const routes = new Map([
   ["/", ["index.html", "text/html"]],
   ["/style.css", ["style.css", "text/css"]],
-  ...["app.mjs", "memory.mjs", "conversation.mjs"].map(name => [`/${name}`, [name, "text/javascript"]])
+  ...["app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs"].map(name => [`/${name}`, [name, "text/javascript"]])
 ]);
 const provider = createProviders({
   apiKey: process.env.OPENAI_API_KEY,

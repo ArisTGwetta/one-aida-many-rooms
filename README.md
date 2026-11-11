@@ -18,6 +18,16 @@ To enable Ollama, set `AIDA_OLLAMA_ENDPOINT` to a trusted HTTP(S) server origin 
 
 See [the intended memory lifecycle](memory-lifecycle.md) for durable context plans.
 
+## RECENT journal
+
+Authorize Drive to resume the most recently saved eligible conversation. The app loads at most three exchanges into context. Open **RECENT journal** to inspect saved files, page through older entries, start a separate conversation, or resume by conversation ID on another device.
+
+**Keep this exchange** defaults to page-only context. Use `Remember this: …` or select **Save to the Drive journal** for a candidate exchange. Select **Temporarily in Drive** for a provisional exchange. Provisional entries expire after 24 hours. The app excludes them from recovery at expiry and moves up to ten expired files to Drive Trash when a new authorization recovers the journal. Normal Drive Trash retention applies.
+
+When a turn becomes meaningful, optionally include the preceding eligible exchange from this page. A provisional exchange can support a candidate before expiry. Each record carries both sides of the exchange, stable source references, timestamps, and its conversation ID. An explicit opt-out or **Leave out of future context** takes precedence. It excludes the current exchange and withdraws the preceding eligible supporting exchange from active context. Previously saved files remain in Drive under their original disposition. The journal performs no reconciliation into FACTS, INSIGHTS, SHORT, or LONG.
+
+Devices append separate Drive files. A save is confirmed after readback. Retry on the same page reuses the reserved Drive ID. If a page closes during a save, recovery can find a file Drive accepted. An exchange that never reached Drive cannot be recovered after closing the page. Simultaneous devices may each answer from their last loaded context. Resume refreshes that context from Drive.
+
 ## Online conversation
 
 The same application runs at `https://aristgwetta.github.io/one-aida-many-rooms/` once this update is published. Authorize the existing Google account and enter the existing three-digit Phone OpenAI route code on the first OpenAI turn. The app reads the private `aida-openai-fragments.json` from the existing Aida development Drive folder and assembles the key in page memory. Use a fresh authorization or reload to clear it. The Pages files contain the loader and provider adapter. The Drive file holds the original OpenAI route structure and segments. Keep that file unshared.

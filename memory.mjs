@@ -78,9 +78,8 @@ export class DriveError extends Error {
 }
 
 // Adapted from Aida Mobile's Drive v3 list, media fetch, and multipart upload.
-export function createMemoryStore(folderId, token, fetchRequest = fetch) {
+export function createDriveClient(folderId, token, fetchRequest = fetch) {
   if (!isId(folderId)) throw new Error("The development folder ID is invalid.");
-  let pending;
 
   async function request(url, options = {}) {
     let response;
@@ -107,9 +106,50 @@ export function createMemoryStore(folderId, token, fetchRequest = fetch) {
     }
   }
 
+  return {
+    verifyFolder,
+    list: query => request(`${api}/files?${query}`),
+    async generateId() {
+      const { ids } = await request(`${api}/files/generateIds?count=1&space=drive`);
+      if (!isId(ids?.[0])) throw new Error("Google Drive did not provide a file ID.");
+      return ids[0];
+    },
+    readJson(fileId) {
+      if (!isId(fileId)) throw new Error("Google Drive returned an invalid file ID.");
+      return request(`${api}/files/${fileId}?alt=media`);
+    },
+    async uploadJson(fileId, name, appProperties, record) {
+      const boundary = `aida-${crypto.randomUUID()}`;
+      const metadata = { id: fileId, name, mimeType: "application/json", parents: [folderId], appProperties };
+      const body = [
+        `--${boundary}`, "Content-Type: application/json; charset=UTF-8", "", JSON.stringify(metadata),
+        `--${boundary}`, "Content-Type: application/json; charset=UTF-8", "", JSON.stringify(record, null, 2),
+        `--${boundary}--`, ""
+      ].join("\r\n");
+      try {
+        await request(`${upload}/files?uploadType=multipart&fields=id`, {
+          method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body
+        });
+      } catch (error) {
+        // A retry after an ambiguous successful upload returns 409 for the same ID.
+        if (error.status !== 409) throw error;
+      }
+    },
+    trash(fileId) {
+      if (!isId(fileId)) throw new Error("Google Drive returned an invalid file ID.");
+      return request(`${api}/files/${fileId}?fields=id,trashed`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: '{"trashed":true}'
+      });
+    }
+  };
+}
+
+export function createMemoryStore(folderId, token, fetchRequest = fetch) {
+  const drive = createDriveClient(folderId, token, fetchRequest);
+  let pending;
+
   async function read(fileId) {
-    if (!isId(fileId)) throw new Error("Google Drive returned an invalid file ID.");
-    const record = validateRecord(await request(`${api}/files/${fileId}?alt=media`));
+    const record = validateRecord(await drive.readJson(fileId));
     return { fileId, record };
   }
 
@@ -120,7 +160,7 @@ export function createMemoryStore(folderId, token, fetchRequest = fetch) {
     });
     let fileId;
     do {
-      const page = await request(`${api}/files?${query}`);
+      const page = await drive.list(query);
       if (page.incompleteSearch || !Array.isArray(page.files)) throw new Error("Google Drive returned an incomplete memory search.");
       for (const file of page.files) {
         if (fileId) throw new Error("More than one Aida memory file was found. Resolve the duplicate in Drive.");
@@ -134,14 +174,14 @@ export function createMemoryStore(folderId, token, fetchRequest = fetch) {
   }
 
   return {
-    verifyFolder,
+    verifyFolder: drive.verifyFolder,
     async recall() {
-      await verifyFolder();
+      await drive.verifyFolder();
       return find();
     },
     async remember(text) {
       const record = createRecord(text);
-      await verifyFolder();
+      await drive.verifyFolder();
       const existing = await find();
       if (existing) {
         if (existing.record.text !== record.text) throw new Error("Aida already has a memory. Use Recall to see it.");
@@ -152,27 +192,11 @@ export function createMemoryStore(folderId, token, fetchRequest = fetch) {
         throw new Error("The previous save could not be confirmed. Retry it with the original text.");
       }
       if (!pending) {
-        const { ids } = await request(`${api}/files/generateIds?count=1&space=drive`);
-        if (!isId(ids?.[0])) throw new Error("Google Drive did not provide a file ID.");
-        pending = { fileId: ids[0], record };
+        pending = { fileId: await drive.generateId(), record };
       }
 
       const { fileId } = pending;
-      const boundary = `aida-${crypto.randomUUID()}`;
-      const metadata = { id: fileId, name: fileName, mimeType: "application/json", parents: [folderId], appProperties: marker };
-      const body = [
-        `--${boundary}`, "Content-Type: application/json; charset=UTF-8", "", JSON.stringify(metadata),
-        `--${boundary}`, "Content-Type: application/json; charset=UTF-8", "", JSON.stringify(pending.record, null, 2),
-        `--${boundary}--`, ""
-      ].join("\r\n");
-      try {
-        await request(`${upload}/files?uploadType=multipart&fields=id`, {
-          method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body
-        });
-      } catch (error) {
-        // A retry after an ambiguous successful upload returns 409 for the same ID.
-        if (error.status !== 409) throw error;
-      }
+      await drive.uploadJson(fileId, fileName, marker, pending.record);
       const stored = await read(fileId);
       if (stored.record.id !== pending.record.id || stored.record.text !== pending.record.text) {
         throw new Error("The record read back from Drive did not match the save.");

@@ -1,5 +1,6 @@
 import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
 import { createConversationSession, ConversationTransportError } from "./conversation.mjs";
+import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
 
 const byId = id => document.getElementById(id);
 const connect = byId("connect");
@@ -11,6 +12,9 @@ let token;
 let store;
 let session;
 let browserKey;
+let running = false;
+let canSend = () => Boolean(session);
+let refreshJournalControls = () => {};
 const send = byId("send");
 const localDevelopment = location.origin === "http://127.0.0.1:8787";
 
@@ -22,8 +26,11 @@ function show(result) {
 }
 
 async function run(label, action, target = status) {
+  if (running) return;
+  running = true;
   if (target === status) evidence.hidden = true;
   connect.disabled = remember.disabled = recall.disabled = send.disabled = true;
+  refreshJournalControls();
   target.textContent = label;
   try {
     target.textContent = await action();
@@ -34,13 +41,16 @@ async function run(label, action, target = status) {
     }
     target.textContent = error.message;
   } finally {
+    running = false;
     connect.disabled = false;
     remember.disabled = recall.disabled = !token;
-    send.disabled = !token || !session;
+    send.disabled = !token || !canSend();
+    refreshJournalControls();
   }
 }
 
 async function setupChat(folderId) {
+  const journal = createJournal(folderId, () => token);
   let dev;
   let direct;
   let loadOpenAIKey;
@@ -63,6 +73,27 @@ async function setupChat(folderId) {
   const transcript = byId("transcript");
   const details = byId("conversation-details");
   const chatStatus = byId("chat-status");
+  const journalStatus = byId("journal-status");
+  const conversationField = byId("conversation-id");
+  const retention = byId("retention");
+  const support = byId("journal-support");
+  const records = byId("journal-records");
+  const retry = byId("journal-retry");
+  const older = byId("journal-older");
+  let conversationId;
+  let preceding;
+  let pending;
+  let nextPage;
+  let disposition = "ephemeral";
+  let sources = [];
+  canSend = () => Boolean(session && !pending);
+  refreshJournalControls = () => {
+    for (const id of ["journal-resume", "journal-new", "journal-inspect", "journal-older"]) {
+      byId(id).disabled = running || !token || Boolean(pending);
+    }
+    retry.hidden = !pending;
+    retry.disabled = running || !token;
+  };
   const preferenceKey = "aida.development.provider";
   let ollamaModel = dev?.ollamaModel ?? "";
   try {
@@ -103,14 +134,43 @@ async function setupChat(folderId) {
 
   let selection;
   let evidence;
-  function resetChat() {
+  function showJournalContext() {
+    byId("journal-context").textContent = [
+      `Conversation ${conversationId}`,
+      `Active recent exchanges ${session?.recentTurnCount ?? 0}`,
+      `Last disposition ${disposition}`,
+      sources.length ? `Sources ${sources.join(", ")}` : ""
+    ].filter(Boolean).join("\n");
+    byId("support-label").hidden = !availableSupport(preceding, "candidate");
+    support.checked = false;
+  }
+
+  function appendExchange(turn) {
+    for (const [speaker, text] of [["You", turn.user.text], ["Aida", turn.aida.text]]) {
+      const line = document.createElement("p");
+      line.textContent = `${speaker}: ${text}`;
+      transcript.append(line);
+    }
+  }
+
+  function resetChat({ id, turns, entries }) {
+    conversationId = id;
+    conversationField.value = id;
+    preceding = undefined;
+    disposition = entries[0]?.event.disposition ?? "ephemeral";
+    sources = turns.flatMap(turn => [turn.user.source, turn.aida.source]);
+    records.hidden = older.hidden = true;
+    records.textContent = "";
+    nextPage = undefined;
     transcript.replaceChildren();
+    turns.forEach(appendExchange);
     details.hidden = true;
     byId("conversation-evidence").textContent = "";
     chatStatus.textContent = "Enter a message to start.";
     showSelection();
     session = createConversationSession({
       memoryStore: store,
+      recoveredTurns: turns,
       async provider(envelope) {
         const input = { ...selection, envelope };
         let result;
@@ -143,13 +203,58 @@ async function setupChat(folderId) {
         return result.raw;
       }
     });
+    showJournalContext();
   }
+
+  async function recover(id) {
+    const recovered = await journal.recover(id);
+    resetChat(recovered);
+    return recovered.turns.length
+      ? `Recovered ${recovered.turns.length} exchange(s) from Drive.`
+      : "No saved exchanges for this conversation.";
+  }
+
+  async function savePending() {
+    try {
+      if (pending.event.expiresAt && Date.parse(pending.event.expiresAt) <= Date.now()) {
+        pending = undefined;
+        return "The pending provisional exchange expired. Check Drive if its earlier save was uncertain.";
+      }
+      const stored = await journal.save(pending);
+      pending = undefined;
+      return `Saved and verified in Drive. File ID ${stored.fileId}.`;
+    } catch (error) {
+      journalStatus.textContent = "Journal save unconfirmed. Retry uses the same exchange and file ID.";
+      throw error;
+    }
+  }
+
+  byId("journal-resume").addEventListener("click", () =>
+    run("Recovering conversation from Drive…", () => recover(conversationField.value.trim()), journalStatus));
+  byId("journal-new").addEventListener("click", () => run("Starting a conversation…", async () => {
+    resetChat({ id: crypto.randomUUID(), turns: [], entries: [] });
+    return "New conversation.";
+  }, journalStatus));
+  async function inspect(cursor) {
+    const page = await journal.page(conversationId, cursor);
+    const contents = JSON.stringify(page.entries, null, 2);
+    records.textContent = cursor ? `${records.textContent}\n\n${contents}` : contents;
+    records.hidden = false;
+    nextPage = page.next;
+    older.hidden = !nextPage;
+    return `Read ${page.entries.length} journal file(s) from Drive.`;
+  }
+  byId("journal-inspect").addEventListener("click", () => run("Reading saved exchanges…", () => inspect(), journalStatus));
+  older.addEventListener("click", () => run("Reading older exchanges…", () => inspect(nextPage), journalStatus));
+  retry.addEventListener("click", () => run("Retrying journal save…", savePending, journalStatus));
 
   byId("chat-form").addEventListener("submit", event => {
     event.preventDefault();
     if (send.disabled) return;
     selection = { provider: select.value, model: model.value.trim() };
     const submitted = message.value;
+    const chosenDisposition = dispositionFor(submitted, retention.value);
+    const supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
       if (!localDevelopment && selection.provider === "ollama") {
         let url;
@@ -173,22 +278,70 @@ async function setupChat(folderId) {
         browserKey = await loadOpenAIKey(folderId, code, token);
         showSelection();
       }
-      const result = await session.send(submitted);
-      for (const [speaker, text] of [["You", result.envelope.user.text], ["Aida", result.response.reply]]) {
-        const line = document.createElement("p");
-        line.textContent = `${speaker}: ${text}`;
-        transcript.append(line);
+      if (chosenDisposition === "excluded" && availableSupport(preceding, "candidate")) {
+        session.omitTurn(preceding.turn);
+        preceding = undefined;
       }
+      const result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded" });
+      const turn = { ...result.turn, conversationId };
+      appendExchange(turn);
+      disposition = chosenDisposition;
+      preceding = { turn, disposition };
+      sources = [turn.user.source, turn.aida.source];
+      showJournalContext();
       byId("conversation-evidence").textContent = JSON.stringify({
         ...evidence, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt }) => ({ source, recordId, savedAt })),
         recentMessageCount: result.envelope.memory.recent.length, response: result.response
       }, null, 2);
       details.hidden = false;
       if (message.value === submitted) message.value = "";
+      retention.value = "auto";
+      if (disposition === "candidate" || disposition === "provisional") {
+        pending = { event: makeJournalEvent(conversationId, turn, disposition, supportingTurn) };
+        preceding.expiresAt = pending.event.expiresAt;
+        sources = pending.event.turns.flatMap(item => [item.user.source, item.aida.source]);
+        showJournalContext();
+        try {
+          journalStatus.textContent = await savePending();
+        } catch (error) {
+          if (error.status === 401) {
+            token = undefined;
+            browserKey = undefined;
+          }
+          return `Reply received. Journal save unconfirmed. ${error.message}`;
+        }
+      } else {
+        journalStatus.textContent = disposition === "excluded"
+          ? "Exchange excluded from future context and Drive."
+          : "Exchange kept in page context only.";
+      }
       return "Reply received.";
     }, chatStatus);
   });
-  return resetChat;
+  return async () => {
+    if (pending) {
+      journalStatus.textContent = "Retry the unconfirmed journal save.";
+      showSelection();
+      return;
+    }
+    session = undefined;
+    transcript.replaceChildren();
+    records.hidden = older.hidden = true;
+    records.textContent = byId("conversation-evidence").textContent = "";
+    details.hidden = true;
+    conversationField.value = byId("journal-context").textContent = "";
+    try {
+      journalStatus.textContent = await recover();
+    } catch (error) {
+      journalStatus.textContent = `Journal recovery failed. ${error.message}`;
+      return;
+    }
+    try {
+      await journal.trashExpired();
+    } catch {
+      journalStatus.textContent += " Expired entries were excluded. Drive cleanup could not finish.";
+    }
+  };
 }
 
 function loadGoogle() {
@@ -233,7 +386,7 @@ try {
       token = undefined;
       throw error;
     }
-    resetChat?.();
+    await resetChat?.();
     return "Google Drive connected.";
   }));
   connect.disabled = false;

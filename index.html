@@ -33,7 +33,6 @@
     </section>
     <section id="chat" hidden aria-labelledby="chat-title">
       <h2 id="chat-title">Talk to Aida</h2>
-      <p>Chat history lasts for this page session. Aida reads her saved memory from Drive each turn.</p>
       <form id="chat-form">
         <label for="provider">Provider</label>
         <select id="provider">
@@ -54,9 +53,32 @@
         <div id="transcript" role="log" aria-label="Conversation"></div>
         <label for="message">Message</label>
         <textarea id="message" rows="3" maxlength="4000" required></textarea>
+        <label for="retention">Keep this exchange</label>
+        <select id="retention">
+          <option value="auto">This page only, unless I ask to remember</option>
+          <option value="provisional">Temporarily in Drive (24 hours)</option>
+          <option value="candidate">Save to the Drive journal</option>
+          <option value="exclude">Leave out of future context</option>
+        </select>
+        <label id="support-label" hidden><input type="checkbox" id="journal-support"> Include the preceding eligible exchange as supporting context</label>
         <button id="send" disabled>Send</button>
         <p id="chat-status" role="status"></p>
       </form>
+      <details id="journal">
+        <summary>RECENT journal</summary>
+        <p id="journal-status" role="status">Authorize Drive to recover saved exchanges.</p>
+        <p id="journal-context"></p>
+        <label for="conversation-id">Conversation ID</label>
+        <input id="conversation-id" maxlength="36">
+        <div class="actions">
+          <button id="journal-resume" type="button" disabled>Resume</button>
+          <button id="journal-new" type="button" disabled>New conversation</button>
+          <button id="journal-inspect" type="button" disabled>Inspect saved exchanges</button>
+          <button id="journal-older" type="button" hidden>Older entries</button>
+          <button id="journal-retry" type="button" hidden>Retry journal save</button>
+        </div>
+        <pre id="journal-records" hidden></pre>
+      </details>
       <details id="conversation-details" hidden>
         <summary>Development evidence</summary>
         <pre id="conversation-evidence"></pre>

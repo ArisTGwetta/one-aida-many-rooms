@@ -72,20 +72,28 @@ export function parseConversationResponse(raw, envelope) {
   return output;
 }
 
-// The provider boundary accepts one envelope and returns JSON text. All state here is session-only.
-export function createConversationSession({ memoryStore, provider }) {
-  let recent = [];
+// The provider boundary accepts one envelope and returns JSON text.
+export function createConversationSession({ memoryStore, provider, recoveredTurns = [] }) {
+  let recent = recoveredTurns.flatMap(turn => [turn.user, turn.aida]).slice(-recentLimit);
+  let lastOrder = recoveredTurns.reduce((latest, turn) => Math.max(latest, turn.order), 0);
   let affect = { ...initialAffect };
   let inFlight = false;
 
   return {
-    async send(message) {
+    get recentTurnCount() { return recent.length / 2; },
+    omitTurn(turn) {
+      recent = recent.filter(entry => entry.source !== turn.user.source && entry.source !== turn.aida.source);
+    },
+    async send(message, { keepInContext = true } = {}) {
       if (!text(message, 4000)) throw new Error("Enter a message between 1 and 4,000 characters.");
       if (inFlight) throw new Error("A conversation turn is already in progress.");
       inFlight = true;
       try {
+        const turnId = crypto.randomUUID();
+        const startedAt = new Date().toISOString();
+        const order = Math.max(Date.parse(startedAt), lastOrder + 1);
         const saved = await memoryStore.recall();
-        const user = { source: `session:${crypto.randomUUID()}`, role: "user", text: message.trim() };
+        const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
         const envelope = {
           version: conversationVersion,
           identity: { name: "Aida", relationship: "The user's ongoing conversational companion." },
@@ -100,7 +108,7 @@ export function createConversationSession({ memoryStore, provider }) {
             recent: structuredClone(recent)
           },
           affect: { ...affect },
-          environment: { recentStorage: "browser-session", tools: [] },
+          environment: { recentStorage: recoveredTurns.length ? "drive-and-browser-session" : "browser-session", tools: [] },
           user
         };
         let raw;
@@ -111,11 +119,11 @@ export function createConversationSession({ memoryStore, provider }) {
           throw new Error("The conversation provider failed. Try again.");
         }
         const response = parseConversationResponse(raw, envelope);
-        recent = [...recent, user, {
-          source: `session:${crypto.randomUUID()}`, role: "aida", text: response.reply
-        }].slice(-recentLimit);
+        const aida = { source: `turn:${turnId}:aida`, role: "aida", text: response.reply };
+        if (keepInContext) recent = [...recent, user, aida].slice(-recentLimit);
+        lastOrder = order;
         affect = { ...response.affect };
-        return { envelope, response };
+        return { envelope, response, turn: { turnId, order, startedAt, completedAt: new Date().toISOString(), user, aida } };
       } finally {
         inFlight = false;
       }
