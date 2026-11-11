@@ -2,6 +2,7 @@ import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
 import { createConversationSession, ConversationTransportError } from "./conversation.mjs";
 import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
 import { setupSleepPanel } from "./sleep-panel.mjs";
+import { createSleepStore } from "./sleep.mjs";
 
 const byId = id => document.getElementById(id);
 const connect = byId("connect");
@@ -52,6 +53,7 @@ async function run(label, action, target = status) {
 
 async function setupChat(folderId) {
   const journal = createJournal(folderId, () => token);
+  const sleepStore = createSleepStore(folderId, () => token);
   let dev;
   let direct;
   let loadOpenAIKey;
@@ -193,7 +195,7 @@ async function setupChat(folderId) {
   }
 
   const clearSleepPanel = setupSleepPanel({
-    folderId, token: () => token, journal, run,
+    store: sleepStore, journal, run,
     async provider(sleep) { return invokeProvider({ ...await prepareSelection(), sleep }); }
   });
   function showJournalContext() {
@@ -232,6 +234,7 @@ async function setupChat(folderId) {
     showSelection();
     session = createConversationSession({
       memoryStore: store,
+      loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope) {
         const result = await invokeProvider({ ...selection, envelope });
@@ -304,7 +307,8 @@ async function setupChat(folderId) {
       sources = [turn.user.source, turn.aida.source];
       showJournalContext();
       byId("conversation-evidence").textContent = JSON.stringify({
-        ...evidence, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt }) => ({ source, recordId, savedAt })),
+        ...evidence, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt, destination, proposalId, reviewId, sources }) =>
+          ({ source, recordId, savedAt, destination, proposalId, reviewId, sources })),
         recentMessageCount: result.envelope.memory.recent.length, response: result.response
       }, null, 2);
       details.hidden = false;

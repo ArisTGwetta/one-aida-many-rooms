@@ -73,7 +73,7 @@ export function parseConversationResponse(raw, envelope) {
 }
 
 // The provider boundary accepts one envelope and returns JSON text.
-export function createConversationSession({ memoryStore, provider, recoveredTurns = [] }) {
+export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [] }) {
   let recent = recoveredTurns.flatMap(turn => [turn.user, turn.aida]).slice(-recentLimit);
   let lastOrder = recoveredTurns.reduce((latest, turn) => Math.max(latest, turn.order), 0);
   let affect = { ...initialAffect };
@@ -92,19 +92,19 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const turnId = crypto.randomUUID();
         const startedAt = new Date().toISOString();
         const order = Math.max(Date.parse(startedAt), lastOrder + 1);
-        const saved = await memoryStore.recall();
+        const [saved, canonical] = await Promise.all([memoryStore.recall(), loadCanonicalFacts()]);
         const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
         const envelope = {
           version: conversationVersion,
           identity: { name: "Aida", relationship: "The user's ongoing conversational companion." },
           memory: {
             long: [], short: [], insights: [],
-            facts: saved ? [{
+            facts: [...(saved ? [{
               source: `drive:${saved.fileId}`,
               recordId: saved.record.id,
               savedAt: saved.record.updated_at,
               text: saved.record.text
-            }] : [],
+            }] : []), ...canonical],
             recent: structuredClone(recent)
           },
           affect: { ...affect },

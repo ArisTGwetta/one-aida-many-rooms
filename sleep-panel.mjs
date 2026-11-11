@@ -1,9 +1,8 @@
-import { createSleepCycle, createSleepStore } from "./sleep.mjs";
+import { createSleepCycle } from "./sleep.mjs";
 
 const byId = id => document.getElementById(id);
 
-export function setupSleepPanel({ folderId, token, journal, run, provider }) {
-  const store = createSleepStore(folderId, token);
+export function setupSleepPanel({ store, journal, run, provider }) {
   const cycle = createSleepCycle({ journal, store, provider });
   const status = byId("sleep-status");
   const report = byId("sleep-report");
@@ -45,11 +44,18 @@ export function setupSleepPanel({ folderId, token, journal, run, provider }) {
       return control;
     };
     let decision = latest;
-    function show() {
-      title.textContent = `${proposal.category} · ${decision?.status ?? "pending"}${proposal.synthetic ? " · synthetic" : ""}`;
-      body.textContent = JSON.stringify({ ...proposal, status: decision?.status ?? "pending", latestReview: decision ?? null }, null, 2);
+    async function show() {
+      const effective = await store.effectiveVersion(proposal, decision);
+      const committed = Boolean(decision?.canonicalFact);
+      const needsCommit = proposal.destination === "aida/fact" && !proposal.synthetic && decision?.status === "accepted" && !committed;
+      const commitLabel = committed ? " · committed to Drive" : needsCommit ? " · awaiting FACT commit" : "";
+      title.textContent = `${proposal.category} · ${decision?.status ?? "pending"}${commitLabel}${proposal.synthetic ? " · synthetic" : ""}`;
+      body.textContent = JSON.stringify({
+        ...proposal, status: decision?.status ?? "pending", effectiveText: effective.text,
+        canonicalCommitVerified: committed, latestReview: decision ?? null
+      }, null, 2);
     }
-    show();
+    await show();
     for (const [text, choice] of [["Accept", "accepted"], ["Correct", "corrected"], ["Reject", "rejected"], ["Defer", "deferred"]]) {
       button(text, () => run("Saving review…", async () => {
         try {
@@ -60,14 +66,14 @@ export function setupSleepPanel({ folderId, token, journal, run, provider }) {
           });
         } catch (error) {
           decision = (await store.reviewPage(proposal.id, undefined, 1)).decisions[0];
-          show();
+          await show();
           throw error;
         }
         correction.value = "";
         history.hidden = true;
         moreHistory.hidden = true;
-        show();
-        return "Review recorded in Drive.";
+        await show();
+        return decision.canonicalFact ? "FACT committed and verified in Drive." : "Review recorded in Drive.";
       }, status));
     }
     let historyCursor;

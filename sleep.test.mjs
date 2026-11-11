@@ -3,11 +3,13 @@ import test from "node:test";
 import { createJournal, makeJournalEvent } from "./recent-journal.mjs";
 import { createSleepCycle, createSleepStore } from "./sleep.mjs";
 import { createProviders, openAIModel } from "./providers.mjs";
+import { createConversationSession } from "./conversation.mjs";
 
 function fakeDrive() {
   const files = new Map();
   let id = 0;
   let failure;
+  let failureKind = "run";
   let time = Date.now();
   async function fetchRequest(input, options) {
     const url = new URL(input);
@@ -19,7 +21,7 @@ function fakeDrive() {
         .map(part => JSON.parse(part.split("\r\n\r\n")[1]));
       assert.deepEqual(metadata.parents, ["fixture-folder"]);
       if (files.has(metadata.id)) return new Response(null, { status: 409 });
-      const lose = metadata.appProperties.kind === "run" ? failure : null;
+      const lose = metadata.appProperties.kind === failureKind ? failure : null;
       if (lose) failure = undefined;
       if (lose !== "before") files.set(metadata.id, { ...metadata, record });
       if (lose) throw new Error("Lost connection");
@@ -50,12 +52,16 @@ function fakeDrive() {
     journal: createJournal("fixture-folder", () => "fixture-token", fetchRequest, () => time),
     store: createSleepStore("fixture-folder", () => "fixture-token", fetchRequest)
   });
-  return { connect, files, fail: phase => { failure = phase; }, setTime: value => { time = value; } };
+  return {
+    connect, files, setTime: value => { time = value; },
+    fail: (phase, kind = "run") => { failure = phase; failureKind = kind; }
+  };
 }
 
 const conversationId = crypto.randomUUID();
 const chaos = "For a continuity test, Chaos is appointed Chief Inspector of Sardine Shipments.";
 const description = "Chaos is an electronic cat, referred to as she, and we playfully blame her for household mishaps.";
+const catFact = "The user says Chaos is an electronic cat.";
 const question = "What is a staphylococcus?";
 async function journalTurn(journal, text, disposition = "candidate", time = Date.now()) {
   const turnId = crypto.randomUUID();
@@ -95,7 +101,7 @@ test("Drive-only sleep classifies the Chaos fixtures, persists evidence and reco
     assert.ok(!evidence.some(item => item.source === c.user.source || item.text.includes("expired")));
     return response([
       proposal("DIARY", "A synthetic continuity scenario assigned Chaos a playful role.", a.user.source),
-      proposal("FACT", b.user.text, b.user.source),
+      proposal("FACT", catFact, b.user.source),
       proposal("INSIGHT", "The household blame appears to be a recurring joke.", b.user.source)
     ]);
   };
@@ -106,7 +112,7 @@ test("Drive-only sleep classifies the Chaos fixtures, persists evidence and reco
   assert.deepEqual(run.noUpdates, ["SHORT", "LONG"]);
   assert.equal(run.proposals[0].synthetic, true);
   assert.equal(run.proposals[0].evidence[0].source, a.user.source);
-  assert.equal(run.proposals[1].text, description);
+  assert.equal(run.proposals[1].text, catFact);
   assert.equal(run.proposals[1].evidence[0].text, description);
   assert.equal(run.proposals[1].status, "pending");
   const fresh = drive.connect();
@@ -150,7 +156,7 @@ test("interrupted atomic run retries and review history preserves the proposal a
     const client = drive.connect();
     const b = await journalTurn(client.journal, description);
     let calls = 0;
-    const provider = async () => { calls++; return response([proposal("FACT", b.user.text, b.user.source)]); };
+    const provider = async () => { calls++; return response([proposal("FACT", catFact, b.user.source)]); };
     const cycle = createSleepCycle({ ...client, provider });
     drive.fail(phase);
     await assert.rejects(cycle(), /reach Google Drive/);
@@ -171,6 +177,73 @@ test("interrupted atomic run retries and review history preserves the proposal a
     assert.deepEqual(await store.findProposal(original.id), original);
     assert.equal([...drive.files.values()].filter(file => file.record.proposals?.some(item => item.id === original.id)).length, 1);
   }
+});
+
+test("atomic introduction, legacy correction repair, and canonical FACT recall on a fresh device", async () => {
+  const drive = fakeDrive();
+  const client = drive.connect();
+  const name = "The user's name is Morgan.";
+  const date = "The user says they and Aida first met on November 9, 2026.";
+  const intro = await journalTurn(client.journal, "Please remember: my name is Morgan; and we met for the first time today, November 9, 2026.");
+  const quick = await journalTurn(client.journal, "How do you spell rhythm?");
+  const cycle = createSleepCycle({ ...client, provider: async ({ evidence }) => {
+    assert.deepEqual(evidence.find(item => item.source === intro.user.source).factOptions, [name, date]);
+    assert.ok(!evidence.some(item => item.source === quick.user.source));
+    return response([proposal("FACT", name, intro.user.source), proposal("FACT", date, intro.user.source)]);
+  } });
+  const { run } = await cycle();
+  const [nameProposal, dateProposal] = run.proposals;
+  assert.deepEqual(await client.store.canonicalFacts(), []);
+  const correction = await client.store.review({ proposalId: nameProposal.id, status: "corrected", correction: "The user's name is Morgan Lee." });
+  assert.deepEqual(await client.store.canonicalFacts(), []);
+  const historical = await client.store.review({ proposalId: nameProposal.id, status: "accepted", previous: correction.id });
+  assert.equal(historical.canonicalFact.text, correction.correction);
+  const correctFile = drive.files.get(correction.fileId);
+  delete correctFile.record.effectiveText;
+  delete correctFile.record.correctionReviewId;
+  const oldAccept = drive.files.get(historical.fileId);
+  delete oldAccept.appProperties.canonical;
+  delete oldAccept.record.canonicalFact;
+  delete oldAccept.record.effectiveText;
+  delete oldAccept.record.correctionReviewId;
+
+  const fresh = drive.connect().store;
+  const oldDecision = (await fresh.reviewPage(nameProposal.id)).decisions[0];
+  assert.equal((await fresh.effectiveVersion(nameProposal, oldDecision)).text, correction.correction);
+  assert.deepEqual(await fresh.canonicalFacts(), []);
+  drive.fail("before", "review");
+  await assert.rejects(fresh.review({ proposalId: nameProposal.id, status: "accepted", previous: oldDecision.id }), /reach Google Drive/);
+  assert.deepEqual(await drive.connect().store.canonicalFacts(), []);
+  const accepted = await fresh.review({ proposalId: nameProposal.id, status: "accepted", previous: oldDecision.id });
+  assert.equal(accepted.effectiveText, correction.correction);
+  assert.equal(accepted.correctionReviewId, correction.id);
+  assert.equal(accepted.canonicalFact.text, correction.correction);
+  assert.equal((await fresh.review({ proposalId: nameProposal.id, status: "accepted", previous: oldDecision.id })).id, accepted.id);
+  assert.equal((await fresh.review({ proposalId: nameProposal.id, status: "accepted", previous: accepted.id })).id, accepted.id);
+  const dateAccepted = await fresh.review({ proposalId: dateProposal.id, status: "accepted" });
+  assert.equal(dateAccepted.canonicalFact.text, date);
+
+  const otherDevice = drive.connect().store;
+  const session = createConversationSession({
+    memoryStore: { recall: async () => ({ fileId: "original", record: { id: "first", text: "An unrelated first memory." } }) },
+    loadCanonicalFacts: otherDevice.canonicalFacts,
+    provider: async envelope => {
+      const fact = envelope.memory.facts.find(item => item.text === correction.correction);
+      assert.equal(fact.source, `drive:${accepted.fileId}`);
+      assert.equal(fact.attribution, "user-reported");
+      assert.equal(envelope.memory.facts[0].text, "An unrelated first memory.");
+      return JSON.stringify({
+        version: "0.2", reply: "Your name is Morgan Lee.", intent: "recall", route: "reply",
+        affect: envelope.affect, candidates: { facts: [], insights: [], short: [], long: [] }, tools: []
+      });
+    }
+  });
+  assert.equal((await session.send("What is my name?")).response.reply, "Your name is Morgan Lee.");
+  await fresh.review({ proposalId: dateProposal.id, status: "deferred", previous: dateAccepted.id });
+  await fresh.review({ proposalId: nameProposal.id, status: "rejected", previous: accepted.id });
+  assert.deepEqual(await otherDevice.canonicalFacts(), []);
+  assert.equal((await otherDevice.findProposal(nameProposal.id)).text, name);
+  assert.equal((await otherDevice.reviewPage(nameProposal.id)).decisions.length, 4);
 });
 
 test("selected OpenAI and Ollama adapters use the sleep schema without changing the chat contract", async () => {

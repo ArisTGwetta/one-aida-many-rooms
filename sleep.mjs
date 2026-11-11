@@ -4,6 +4,7 @@ import { categories, maxSleepBytes, parseSleepResponse, sleepLimit, sourceEviden
 const marker = "sleep-v1";
 const idPattern = /^[a-f0-9]{64}$/;
 const reviewStatuses = ["accepted", "corrected", "rejected", "deferred", "superseded"];
+const factDestination = "aida/fact";
 const property = (key, value) => `appProperties has { key='${key}' and value='${value}' }`;
 
 function evidenceBatches(evidence) {
@@ -58,6 +59,13 @@ export function createSleepStore(folderId, token, fetchRequest = fetch) {
         (kind === "review" && (!reviewStatuses.includes(record.status) || file.appProperties.proposal !== record.proposalId))) {
       throw new Error("A sleep queue record has invalid metadata.");
     }
+    if (record.canonicalFact && (kind !== "review" || record.status !== "accepted" ||
+        record.canonicalFact.destination !== factDestination || record.canonicalFact.text !== record.effectiveText ||
+        record.canonicalFact.authority !== "human-accepted" || record.canonicalFact.attribution !== "user-reported" ||
+        !Array.isArray(record.canonicalFact.sources) || !record.canonicalFact.sources.length ||
+        file.appProperties.canonical !== factDestination)) {
+      throw new Error("A canonical FACT does not match its acceptance record.");
+    }
     return { ...record, fileId: file.id };
   }
 
@@ -106,6 +114,52 @@ export function createSleepStore(folderId, token, fetchRequest = fetch) {
     return { decisions, next: page.nextPageToken };
   }
 
+  async function effectiveVersion(proposal, decision) {
+    const visited = new Set();
+    while (decision) {
+      if (decision.proposalId !== proposal.id || visited.has(decision.id)) throw new Error("Invalid review history.");
+      visited.add(decision.id);
+      if (decision.effectiveText) {
+        return { text: decision.effectiveText, correctionReviewId: decision.correctionReviewId ?? null };
+      }
+      if (decision.status === "corrected" && decision.correction) {
+        return { text: decision.correction, correctionReviewId: decision.id };
+      }
+      if (!decision.previous) break;
+      if (!idPattern.test(decision.previous)) throw new Error("Invalid previous review ID.");
+      decision = await find("review", decision.previous);
+      if (!decision) throw new Error("Previous review is unavailable in Drive.");
+    }
+    return { text: proposal.text, correctionReviewId: null };
+  }
+
+  async function canonicalFacts() {
+    const facts = new Map();
+    const seenProposals = new Set();
+    let cursor;
+    do {
+      const page = await list("review", property("canonical", factDestination), cursor, 12);
+      for (const file of page.files) {
+        const decision = await read(file, "review");
+        if (!decision.canonicalFact) throw new Error("A canonical FACT is missing from its indexed acceptance.");
+        if (seenProposals.has(decision.proposalId)) continue;
+        seenProposals.add(decision.proposalId);
+        const latest = (await reviewPage(decision.proposalId, undefined, 1)).decisions[0];
+        if (latest?.id !== decision.id) continue;
+        const fact = decision.canonicalFact;
+        const key = fact.text.trim().replace(/\s+/g, " ").toLowerCase();
+        if (!facts.has(key)) facts.set(key, {
+          source: `drive:${decision.fileId}`, text: fact.text,
+          destination: fact.destination, attribution: fact.attribution,
+          proposalId: decision.proposalId, reviewId: decision.id, sources: fact.sources
+        });
+        if (facts.size === 6) return [...facts.values()];
+      }
+      cursor = page.nextPageToken;
+    } while (cursor);
+    return [...facts.values()];
+  }
+
   return {
     async findRun(id) { return find("run", id); },
     async saveRun(run) {
@@ -113,6 +167,8 @@ export function createSleepStore(folderId, token, fetchRequest = fetch) {
       return save(run, props);
     },
     findProposal,
+    effectiveVersion,
+    canonicalFacts,
     async queue(cursor) {
       const result = await list("run", undefined, cursor, 3);
       const runs = await Promise.all(result.files.map(file => read(file, "run")));
@@ -125,16 +181,27 @@ export function createSleepStore(folderId, token, fetchRequest = fetch) {
           (status === "corrected" ? !correction || correction.length > 4000 : Boolean(correction))) {
         throw new Error("Choose a valid review decision and enter text for corrections.");
       }
-      if (!await findProposal(proposalId)) throw new Error("Proposal was not found in Drive.");
-      const id = await digest({ proposalId, status, correction, previous });
+      const proposal = await findProposal(proposalId);
+      if (!proposal) throw new Error("Proposal was not found in Drive.");
+      const id = await digest({ version: 2, proposalId, status, correction, previous });
       const existing = await find("review", id);
       if (existing) return existing;
       const latest = (await reviewPage(proposalId, undefined, 1)).decisions[0];
       if ((latest?.id ?? null) !== previous) throw new Error("The proposal changed. Reload its review before deciding.");
+      if (status === "accepted" && latest?.canonicalFact) return latest;
+      const version = status === "corrected"
+        ? { text: correction, correctionReviewId: id }
+        : await effectiveVersion(proposal, latest);
+      const canonicalFact = status === "accepted" && proposal.category === "FACT" &&
+        proposal.destination === factDestination && proposal.synthetic === false
+        ? { destination: factDestination, text: version.text, authority: "human-accepted",
+          attribution: "user-reported", sources: proposal.sources }
+        : null;
       return save({
         schema_version: 1, kind: "review", id, proposalId, status, correction: correction || null,
+        effectiveText: version.text, correctionReviewId: version.correctionReviewId, canonicalFact,
         previous, reviewer: "human", authority: "proposal-review-only", createdAt: new Date().toISOString()
-      }, { proposal: proposalId });
+      }, { proposal: proposalId, ...(canonicalFact ? { canonical: factDestination } : {}) });
     }
   };
 }
@@ -152,7 +219,7 @@ export function createSleepCycle({ journal, store, provider }) {
     const evidence = sourceEvidence(page.entries);
     const examined = evidence.map(({ source, fileId, turnId, conversationId, disposition, at, incidental, synthetic }) =>
       ({ source, fileId, turnId, conversationId, disposition, at, incidental, synthetic }));
-    const id = await digest({ version: "sleep-v0.1", evidence: [...evidence].sort((a, b) => a.source.localeCompare(b.source)) });
+    const id = await digest({ version: "sleep-v0.1-atomic-facts", evidence: [...evidence].sort((a, b) => a.source.localeCompare(b.source)) });
     const existing = await store.findRun(id);
     if (existing) return { run: existing, next: page.next, reused: true };
 
