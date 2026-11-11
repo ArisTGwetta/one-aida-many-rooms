@@ -58,3 +58,5 @@ pre { background: #eef4ee; padding: .75rem; border-radius: .5rem; white-space: p
 #transcript { overflow-wrap: anywhere; white-space: pre-wrap; }
 #journal { margin-top: 1rem; }
 #journal-context { white-space: pre-wrap; overflow-wrap: anywhere; }
+#sleep-panel { margin-top: 1rem; }
+#sleep-controls { min-inline-size: 0; margin-top: .75rem; }

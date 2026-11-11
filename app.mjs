@@ -1,6 +1,7 @@
 import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
 import { createConversationSession, ConversationTransportError } from "./conversation.mjs";
 import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
+import { setupSleepPanel } from "./sleep-panel.mjs";
 
 const byId = id => document.getElementById(id);
 const connect = byId("connect");
@@ -88,6 +89,7 @@ async function setupChat(folderId) {
   let sources = [];
   canSend = () => Boolean(session && !pending);
   refreshJournalControls = () => {
+    byId("sleep-controls").disabled = running || !token;
     for (const id of ["journal-resume", "journal-new", "journal-inspect", "journal-older"]) {
       byId(id).disabled = running || !token || Boolean(pending);
     }
@@ -134,6 +136,66 @@ async function setupChat(folderId) {
 
   let selection;
   let evidence;
+
+  async function invokeProvider(input) {
+    if (localDevelopment) {
+      const response = await fetch("./dev-chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new ConversationTransportError(result.error ?? "The local server rejected the request.");
+      return result;
+    }
+    try {
+      const invoke = direct.createProviders({
+        apiKey: input.provider === "openai" ? browserKey : undefined,
+        ollamaEndpoint: input.ollamaEndpoint
+      });
+      return await invoke(input);
+    } catch (error) {
+      if (error instanceof direct.ProviderError) {
+        if (input.provider === "openai" && error.status === 401) {
+          browserKey = undefined;
+          showSelection();
+        }
+        throw new ConversationTransportError(error.message);
+      }
+      throw error;
+    }
+  }
+
+  async function prepareSelection() {
+    const selected = { provider: select.value, model: model.value.trim() };
+    if (localDevelopment) return selected;
+    if (selected.provider === "ollama") {
+      let url;
+      try {
+        url = new URL(endpoint.value);
+      } catch {
+        throw new Error("Enter a valid Ollama endpoint URL.");
+      }
+      if (url.protocol !== "https:" && !(url.protocol === "http:" &&
+          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) {
+        throw new Error("Use a trusted HTTPS Ollama endpoint or an HTTP loopback endpoint.");
+      }
+      if (url.username || url.password || url.search || url.hash || !["/", "/api/chat"].includes(url.pathname)) {
+        throw new Error("Enter the Ollama origin or /api/chat URL without credentials or query parameters.");
+      }
+      selected.ollamaEndpoint = url.href;
+    } else if (!browserKey) {
+      const code = routeCode.value;
+      routeCode.value = "";
+      browserKey = await loadOpenAIKey(folderId, code, token);
+      showSelection();
+    }
+    return selected;
+  }
+
+  const clearSleepPanel = setupSleepPanel({
+    folderId, token: () => token, journal, run,
+    async provider(sleep) { return invokeProvider({ ...await prepareSelection(), sleep }); }
+  });
   function showJournalContext() {
     byId("journal-context").textContent = [
       `Conversation ${conversationId}`,
@@ -172,33 +234,7 @@ async function setupChat(folderId) {
       memoryStore: store,
       recoveredTurns: turns,
       async provider(envelope) {
-        const input = { ...selection, envelope };
-        let result;
-        if (localDevelopment) {
-          const response = await fetch("./dev-chat", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(input)
-          });
-          result = await response.json();
-          if (!response.ok) throw new ConversationTransportError(result.error ?? "The local chat server rejected the request.");
-        } else {
-          try {
-            const invoke = direct.createProviders({
-              apiKey: selection.provider === "openai" ? browserKey : undefined,
-              ollamaEndpoint: selection.ollamaEndpoint
-            });
-            result = await invoke(input);
-          } catch (error) {
-            if (error instanceof direct.ProviderError) {
-              if (selection.provider === "openai" && error.status === 401) {
-                browserKey = undefined;
-                showSelection();
-              }
-              throw new ConversationTransportError(error.message);
-            }
-            throw error;
-          }
-        }
+        const result = await invokeProvider({ ...selection, envelope });
         evidence = { provider: result.provider, model: result.model, usage: result.usage };
         return result.raw;
       }
@@ -251,33 +287,11 @@ async function setupChat(folderId) {
   byId("chat-form").addEventListener("submit", event => {
     event.preventDefault();
     if (send.disabled) return;
-    selection = { provider: select.value, model: model.value.trim() };
     const submitted = message.value;
     const chosenDisposition = dispositionFor(submitted, retention.value);
     const supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
-      if (!localDevelopment && selection.provider === "ollama") {
-        let url;
-        try {
-          url = new URL(endpoint.value);
-        } catch {
-          throw new Error("Enter a valid Ollama endpoint URL.");
-        }
-        if (url.protocol !== "https:" && !(url.protocol === "http:" &&
-            ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) {
-          throw new Error("Use a trusted HTTPS Ollama endpoint or an HTTP loopback endpoint.");
-        }
-        if (url.username || url.password || url.search || url.hash || !["/", "/api/chat"].includes(url.pathname)) {
-          throw new Error("Enter the Ollama origin or /api/chat URL without credentials or query parameters.");
-        }
-        selection.ollamaEndpoint = url.href;
-      }
-      if (!localDevelopment && selection.provider === "openai" && !browserKey) {
-        const code = routeCode.value;
-        routeCode.value = "";
-        browserKey = await loadOpenAIKey(folderId, code, token);
-        showSelection();
-      }
+      selection = await prepareSelection();
       if (chosenDisposition === "excluded" && availableSupport(preceding, "candidate")) {
         session.omitTurn(preceding.turn);
         preceding = undefined;
@@ -319,6 +333,7 @@ async function setupChat(folderId) {
     }, chatStatus);
   });
   return async () => {
+    clearSleepPanel();
     if (pending) {
       journalStatus.textContent = "Retry the unconfirmed journal save.";
       showSelection();

@@ -10,7 +10,8 @@ const origin = `http://${authority}`;
 const routes = new Map([
   ["/", ["index.html", "text/html"]],
   ["/style.css", ["style.css", "text/css"]],
-  ...["app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs"].map(name => [`/${name}`, [name, "text/javascript"]])
+  ...["app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs"]
+    .map(name => [`/${name}`, [name, "text/javascript"]])
 ]);
 const provider = createProviders({
   apiKey: process.env.OPENAI_API_KEY,
@@ -80,7 +81,7 @@ export async function handleRequest(request, response) {
     send(response, 200, await provider(input));
   } catch (error) {
     send(response, 502, { error: error instanceof ProviderError
-      ? error.message : "The provider reply did not match the conversation contract." });
+      ? error.message : "The provider reply did not match the requested contract." });
   } finally {
     busy = false;
   }

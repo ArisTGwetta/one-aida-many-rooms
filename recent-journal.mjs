@@ -118,6 +118,14 @@ export function createJournal(folderId, token, fetchRequest = fetch, now = Date.
 
   return {
     page,
+    async sleepEvidence(cursor) {
+      const result = await list(eligibleFilter(), 12, cursor);
+      const entries = await Promise.all(result.files.map(read));
+      return {
+        entries: entries.filter(({ event }) => !event.expiresAt || Date.parse(event.expiresAt) > now()),
+        next: result.nextPageToken
+      };
+    },
     async recover(conversationId) {
       let id = conversationId;
       if (!id) {

@@ -79,6 +79,21 @@
         </div>
         <pre id="journal-records" hidden></pre>
       </details>
+      <details id="sleep-panel">
+        <summary>Sleep and memory proposals</summary>
+        <fieldset id="sleep-controls" disabled>
+          <legend>Sleep cycle</legend>
+          <div class="actions">
+            <button id="sleep-run" type="button">Run sleep cycle</button>
+            <button id="sleep-older" type="button" hidden>Run on older evidence</button>
+            <button id="sleep-queue" type="button">Load review queue</button>
+            <button id="sleep-queue-older" type="button" hidden>Older proposals</button>
+          </div>
+          <p id="sleep-status" role="status"></p>
+          <pre id="sleep-report" hidden></pre>
+          <div id="sleep-proposals"></div>
+        </fieldset>
+      </details>
       <details id="conversation-details" hidden>
         <summary>Development evidence</summary>
         <pre id="conversation-evidence"></pre>

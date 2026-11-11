@@ -1,4 +1,5 @@
 import { parseConversationResponse } from "./conversation.mjs";
+import { maxSleepBytes, parseSleepResponse, sleepInstructions, sleepSchema } from "./sleep-contract.mjs";
 
 export const openAIModel = "gpt-6-luna";
 export const maxEnvelopeBytes = 48 * 1024;
@@ -83,13 +84,13 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
 
   // Request shape and output-text extraction adapted from Workbench's Responses route.
   const adapters = {
-    async openai(model, content) {
+    async openai(model, content, format) {
       if (model !== openAIModel) throw new ProviderError("Select the supported OpenAI model.");
       if (!apiKey) throw new ProviderError("Set OPENAI_API_KEY in the local server environment and restart it.");
       const result = await post("OpenAI", "https://api.openai.com/v1/responses", {
-        model, instructions, input: content, store: false, max_output_tokens: maxOutputTokens,
+        model, instructions: format.instructions, input: content, store: false, max_output_tokens: format.tokens,
         reasoning: { effort: "none" },
-        text: { format: { type: "json_schema", name: "aida_conversation_v02", strict: true, schema } }
+        text: { format: { type: "json_schema", name: format.name, strict: true, schema: format.schema } }
       }, { Authorization: `Bearer ${apiKey}` });
       const parts = (result?.output ?? []).filter(item => item.type === "message").flatMap(item => item.content ?? []);
       const raw = parts.filter(part => part.type === "output_text").map(part => part.text).join("");
@@ -98,15 +99,15 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
       }
       return { raw, model: result.model ?? model, usage: openAIUsage(result.usage) };
     },
-    async ollama(model, content) {
+    async ollama(model, content, format) {
       if (!localURL) throw new ProviderError("Set AIDA_OLLAMA_ENDPOINT in the local server environment and restart it.");
       if (typeof model !== "string" || !/^[\w][\w.:/-]{0,99}$/.test(model)) {
         throw new ProviderError("Enter an installed Ollama model identifier.");
       }
       const result = await post("Ollama", localURL, {
-        model, stream: false, format: schema,
-        messages: [{ role: "system", content: instructions }, { role: "user", content }],
-        options: { num_ctx: 16384, num_predict: maxOutputTokens }
+        model, stream: false, format: format.schema,
+        messages: [{ role: "system", content: format.instructions }, { role: "user", content }],
+        options: { num_ctx: 16384, num_predict: format.tokens }
       });
       if (result?.done !== true || result.done_reason === "length" || typeof result.message?.content !== "string") {
         throw new ProviderError("Ollama did not complete the structured reply.");
@@ -115,14 +116,26 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
     }
   };
 
-  return async ({ provider, model, envelope }) => {
+  return async ({ provider, model, envelope, sleep }) => {
     if (!Object.hasOwn(adapters, provider)) throw new ProviderError("Choose OpenAI or Ollama.");
+    if (sleep) {
+      if (sleep.version !== "sleep-v0.1" || !Array.isArray(sleep.evidence)) throw new ProviderError("Invalid sleep evidence.");
+      const content = JSON.stringify(sleep);
+      if (new TextEncoder().encode(content).byteLength > maxSleepBytes) throw new ProviderError("The sleep evidence is too large.");
+      const result = await adapters[provider](model, content, {
+        name: "aida_sleep_v01", instructions: sleepInstructions, schema: sleepSchema, tokens: 3000
+      });
+      parseSleepResponse(result.raw, sleep.evidence);
+      return { ...result, provider };
+    }
     if (envelope?.version !== "0.2" || typeof envelope.user?.text !== "string" ||
         !Array.isArray(envelope.memory?.facts) || !Array.isArray(envelope.memory?.recent) ||
         !Array.isArray(envelope.environment?.tools)) throw new ProviderError("Invalid conversation envelope.");
     const content = JSON.stringify(envelope);
     if (new TextEncoder().encode(content).byteLength > maxEnvelopeBytes) throw new ProviderError("The conversation envelope is too large.");
-    const result = await adapters[provider](model, content);
+    const result = await adapters[provider](model, content, {
+      name: "aida_conversation_v02", instructions, schema, tokens: maxOutputTokens
+    });
     parseConversationResponse(result.raw, envelope);
     return { ...result, provider };
   };

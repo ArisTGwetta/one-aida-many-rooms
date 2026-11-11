@@ -28,6 +28,16 @@ When a turn becomes meaningful, optionally include the preceding eligible exchan
 
 Devices append separate Drive files. A save is confirmed after readback. Retry on the same page reuses the reserved Drive ID. If a page closes during a save, recovery can find a file Drive accepted. An exchange that never reached Drive cannot be recovered after closing the page. Simultaneous devices may each answer from their last loaded context. Resume refreshes that context from Drive.
 
+## Manual sleep and proposal review
+
+Authorize Drive, select the provider, and open **Sleep and memory proposals**. **Run sleep cycle** reads up to 12 eligible Drive journal files, including files outside the active conversation. **Run on older evidence** continues through the journal. The selected provider receives the eligible source text. A narrow filter skips plain definition and spelling questions. Larger pages are split into bounded model requests.
+
+The report lists examined sources, excluded incidental turns, provider usage, categories with no update, and proposal IDs. A run saves up to eight new proposals together in one Drive file. A FACT must quote a complete user statement. Other proposals carry a rationale, uncertainty, and original evidence. Explicitly synthetic evidence marks its proposals as synthetic. Provisional records are eligible while unexpired. A proposal made from eligible material preserves the evidence as it appeared at review time.
+
+**Load review queue** recovers proposals independently of chat after authorization. Review actions append decisions with links to earlier decisions. Accept and Correct record review decisions only. They do not update canonical memory. The queue can remain pending while Aida chats, journals, or runs sleep again.
+
+Reopening the same evidence batch reuses a saved run. A same-page retry of an unconfirmed write reuses its reserved Drive ID and skips the provider call. If the page closes before Drive receives the run, retrying can require another model call. Overlapping runs from different devices can race before Drive lists the new file. Stable proposal IDs keep duplicate proposals out of the displayed queue.
+
 ## Online conversation
 
 The same application runs at `https://aristgwetta.github.io/one-aida-many-rooms/` once this update is published. Authorize the existing Google account and enter the existing three-digit Phone OpenAI route code on the first OpenAI turn. The app reads the private `aida-openai-fragments.json` from the existing Aida development Drive folder and assembles the key in page memory. Use a fresh authorization or reload to clear it. The Pages files contain the loader and provider adapter. The Drive file holds the original OpenAI route structure and segments. Keep that file unshared.
