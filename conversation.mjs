@@ -1,4 +1,5 @@
 export const conversationVersion = "0.2";
+export class ConversationTransportError extends Error {}
 const recentLimit = 6;
 const memoryKinds = ["facts", "insights", "short", "long"];
 const intents = ["conversation", "recall", "memory_update", "tool_request"];
@@ -105,7 +106,8 @@ export function createConversationSession({ memoryStore, provider }) {
         let raw;
         try {
           raw = await provider(structuredClone(envelope));
-        } catch {
+        } catch (error) {
+          if (error instanceof ConversationTransportError) throw error;
           throw new Error("The conversation provider failed. Try again.");
         }
         const response = parseConversationResponse(raw, envelope);

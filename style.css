@@ -45,3 +45,14 @@ h2 { margin-top: 0; font-size: 1.2rem; }
 dt { font-weight: 600; }
 dd { margin: 0 0 .75rem; overflow-wrap: anywhere; }
 pre { background: #eef4ee; padding: .75rem; border-radius: .5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+#chat form { margin: 0; padding: 0; border: 0; }
+#chat select, #chat input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: .55rem;
+  border: 1px solid #758b80;
+  border-radius: .5rem;
+  font: inherit;
+}
+#send, #chat details { margin-top: .75rem; }
+#transcript { overflow-wrap: anywhere; white-space: pre-wrap; }

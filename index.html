@@ -13,7 +13,7 @@
       <h1>Aida</h1>
       <p>Save one fact to Google Drive and recall it from another device.</p>
     </header>
-    <form>
+    <form id="memory-form">
       <button id="connect" type="button" disabled>Authorize Google Drive</button>
       <label for="memory">What should Aida remember?</label>
       <textarea id="memory" rows="4" maxlength="4000" required></textarea>
@@ -30,6 +30,29 @@
         <dt>Saved at (UTC)</dt><dd id="saved-at"></dd>
       </dl>
       <pre id="record"></pre>
+    </section>
+    <section id="chat" hidden aria-labelledby="chat-title">
+      <h2 id="chat-title">Talk to Aida</h2>
+      <p>Chat history lasts for this page session. Aida reads her saved memory from Drive each turn.</p>
+      <form id="chat-form">
+        <label for="provider">Provider</label>
+        <select id="provider">
+          <option value="openai">OpenAI API</option>
+          <option value="ollama">Ollama</option>
+        </select>
+        <label for="model">Model</label>
+        <input id="model" maxlength="100" required>
+        <p id="provider-status"></p>
+        <div id="transcript" role="log" aria-label="Conversation"></div>
+        <label for="message">Message</label>
+        <textarea id="message" rows="3" maxlength="4000" required></textarea>
+        <button id="send" disabled>Send</button>
+        <p id="chat-status" role="status"></p>
+      </form>
+      <details id="conversation-details" hidden>
+        <summary>Development evidence</summary>
+        <pre id="conversation-evidence"></pre>
+      </details>
     </section>
   </main>
 </body>
