@@ -133,6 +133,12 @@ export function createDriveClient(folderId, token, fetchRequest = fetch) {
       if (!isId(fileId)) throw new Error("Google Drive returned an invalid file ID.");
       return request(`${api}/files/${fileId}?alt=media`);
     },
+    replaceJson(fileId, record) {
+      if (!isId(fileId)) throw new Error("Google Drive returned an invalid file ID.");
+      return request(`${upload}/files/${fileId}?uploadType=media&fields=id`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(record)
+      });
+    },
     async uploadJson(fileId, name, appProperties, record) {
       const boundary = `aida-${crypto.randomUUID()}`;
       const metadata = { id: fileId, name, mimeType: "application/json", parents: [folderId], appProperties };

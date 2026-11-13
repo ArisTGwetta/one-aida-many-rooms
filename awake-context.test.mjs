@@ -188,6 +188,7 @@ test("owned context initialization survives interruption and flags missing, malf
   const docs = new Map();
   let nextId = 0;
   let failUpload = true;
+  let failCatalogUpdate = false;
   const writes = [];
   const open = () => createContextSource(folder, () => "fixture-token", async (input, options) => {
     const url = new URL(input);
@@ -199,6 +200,16 @@ test("owned context initialization survives interruption and flags missing, malf
     }
     if (id === "generateIds") return Response.json({ ids: [`file-${++nextId}`] });
     if (url.pathname.startsWith("/upload/")) {
+      if (options.method === "PATCH") {
+        if (failCatalogUpdate) {
+          failCatalogUpdate = false;
+          return new Response(null, { status: 503 });
+        }
+        const file = docs.get(id);
+        assert.equal(file.name, "aida-context-projects.json");
+        file.record = JSON.parse(options.body);
+        return Response.json({ id });
+      }
       if (failUpload) {
         failUpload = false;
         throw new Error("connection lost before write");
@@ -258,4 +269,53 @@ test("owned context initialization survives interruption and flags missing, malf
   docs.delete(globalId);
   await assert.rejects(open().initialize(), /Expected Drive context record is missing.*global/);
   assert.equal(writes.length, 4);
+  docs.set(globalId, global);
+  global.record.short = [];
+
+  let selectStory = false;
+  const session = chat(createAwakeSteward(open()), envelope => {
+    if (!selectStory) return answer(envelope);
+    const story = envelope.memory.recent.find(item => item.text === "The scouts guard the gate until dawn.");
+    return answer(envelope, {
+      action: requested(envelope, "propose_project", "fictional-gate", {
+        arguments: [{ name: "name", value: "Fictional Gate" }, { name: "scope", value: "fictional" }]
+      }),
+      rebuild: "project_change",
+      changes: [
+        { scope: "project", layer: "short", text: "The scouts guard the gate until dawn.", sources: [story.source], rationale: "Current situation." },
+        { scope: "global", layer: "short", text: "Unrelated global change.", sources: [envelope.user.source], rationale: "Must stay out." }
+      ]
+    });
+  });
+  await session.send("What is seven times eight?");
+  await session.send("The scouts guard the gate until dawn.");
+  selectStory = true;
+  const proposed = await session.send("I changed my mind. Create Fictional Gate and preserve the story.");
+  const { preview } = proposed.receipt;
+  assert.equal(proposed.receipt.outcome.status, "confirmation_required");
+  assert.deepEqual(proposed.receipt.applied, []);
+  assert.equal(writes.length, 4);
+  assert.equal(preview.entry.scope, "fictional");
+  assert.equal(preview.evidence.length, 2);
+  assert.ok(preview.evidence.every(item => !item.text.includes("seven")));
+  assert.deepEqual(preview.continuity.short[0].sources, [preview.evidence[0].source]);
+  assert.deepEqual(preview.continuity.long, []);
+  assert.deepEqual(preview.continuity.recent, []);
+  assert.equal(journalReceipt(proposed)?.preview, undefined);
+
+  failCatalogUpdate = true;
+  await assert.rejects(open().createProject(preview), /503/);
+  assert.equal(writes.length, 5);
+  assert.ok(!catalog.record.projects.some(item => item.id === preview.entry.id));
+  const saved = await open().createProject(preview);
+  assert.equal(saved.projectId, preview.entry.id);
+  assert.deepEqual(await open().createProject(preview), saved);
+  assert.equal(writes.length, 5);
+  const record = docs.get(saved.continuityReference.slice(6)).record;
+  assert.deepEqual(record.evidence, preview.evidence);
+  assert.deepEqual(record.short, preview.continuity.short);
+  assert.deepEqual(global.record.short, []);
+  await assert.rejects(open().createProject({ ...preview, continuity: {
+    ...preview.continuity, short: [{ ...preview.continuity.short[0], text: "A dragon appeared." }]
+  } }), /differs from the preview/);
 });

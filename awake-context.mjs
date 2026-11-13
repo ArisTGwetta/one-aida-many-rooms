@@ -31,6 +31,9 @@ export const awakeInstructions = [
   "Use switch_project only when the user asks to switch and cite the current user message. A mention is not a switch.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
+  "For an explicit request to create a project from this conversation, use propose_project with a stable slug target and arguments name and scope (fictional or real).",
+  "Cite the current request and use project-scoped changes to propose concise LONG purpose, SHORT current situation, and RECENT developments, each with exact conversation sources. Cite only excerpts relevant to the named project. Preserve fictional scope and leave unsupported layers empty. The steward will preview the transfer for confirmation.",
+  "Say that project creation is proposed and awaits confirmation. Never claim a project has been created by proposing it.",
   "Propose source-grounded changes only when context meaning changes or refresh is due. LONG is purpose and enduring direction, SHORT is current situation and next steps, RECENT is meaningful events.",
   "Use separate global and active-project scopes. Changes add a current observation to a bounded working layer, not a canonical commit.",
   "Use exact visible source IDs. Return empty arrays and null rebuild when there is no update. Report consequential unresolved contradictions and keep candidate facts separate from working context."
@@ -69,7 +72,9 @@ function catalog(doc, kind) {
       if (![entry.name, entry.description, entry.status, entry.routingSummary].every(value => bounded(value, 200))) {
         throw new Error("Invalid project catalog entry.");
       }
-      return { id: entry.id, name: entry.name, description: entry.description, status: entry.status, routingSummary: entry.routingSummary };
+      if (entry.scope !== undefined && !["fictional", "real"].includes(entry.scope)) throw new Error("Invalid project scope.");
+      return { id: entry.id, name: entry.name, description: entry.description, status: entry.status, routingSummary: entry.routingSummary,
+        ...(entry.scope ? { scope: entry.scope } : {}) };
     }
     if (!bounded(entry.purpose, 200) || !bounded(entry.route, 150) ||
         !["available", "unavailable"].includes(entry.availability) ||
@@ -196,6 +201,53 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
       revision++;
       return result;
     },
+    async createProject(preview) {
+      const { entry, continuity: seed, evidence, authorizationSource } = preview;
+      const id = entry.id;
+      catalog({ projects: [entry] }, "projects");
+      continuity(seed);
+      await drive.verifyFolder();
+      const properties = await drive.folderProperties();
+      if (properties[initializedKey] !== "1") throw new Error("Initialize the base Drive context records first.");
+      const [catalogKey, catalogName] = ownedRecords[1];
+      const catalogId = readyId(properties, catalogKey, catalogName);
+      const name = `aida-context-project-${id}.json`;
+      const key = `ctxProject-${id}`;
+      const ready = `ctxReady-${id}`;
+      const initial = { projectId: id, scope: entry.scope, ...seed, evidence, authorizationSource };
+      function verifyProject(doc) {
+        if (JSON.stringify(doc) !== JSON.stringify({ schema_version: 1, ...initial })) {
+          throw new Error("That project ID is already in use or its continuity differs from the preview.");
+        }
+      }
+      const current = await read(catalogName, catalogId);
+      const existing = catalog(current.doc, "projects").find(project => project.id === id);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(entry)) throw new Error("That project ID is already registered.");
+      if (!existing && current.doc.projects.length >= 12) throw new Error("The project catalog is full.");
+      if (existing && !properties[key]) throw new Error("That project ID is already registered.");
+      if (properties[ready]) verifyProject((await read(name, readyId(properties, key, name))).doc);
+      else {
+        const pinned = await ensure(properties, [key, name, () => initial, verifyProject]);
+        verifyProject((await read(name, readyId(pinned, key, name))).doc);
+        await drive.setFolderProperties({ [ready]: "1" });
+      }
+      // Publish the catalog entry only after its continuity has been verified.
+      const latest = await read(catalogName, catalogId);
+      const registered = catalog(latest.doc, "projects").find(project => project.id === id);
+      if (!registered) {
+        const doc = { ...latest.doc, projects: [...latest.doc.projects, entry] };
+        catalog(doc, "projects");
+        await drive.replaceJson(catalogId, doc);
+      }
+      const verified = await load();
+      if (JSON.stringify(verified.projects.find(project => project.id === id)) !== JSON.stringify(entry)) {
+        throw new Error("Project catalog readback did not match the preview.");
+      }
+      const project = await source.project(id);
+      verifyProject((await read(name, project.reference.slice(6))).doc);
+      revision++;
+      return { projectId: id, catalogReference: `drive:${catalogId}`, continuityReference: project.reference };
+    },
     async project(id) {
       if (!stableId(id)) throw new Error("Invalid project context ID.");
       const properties = await drive.folderProperties();
@@ -236,7 +288,8 @@ export function validateAwake(awake, envelope) {
       if (allowed) fields.push("layer");
       if (!exact(entry, fields) || !["global", "project"].includes(entry.scope) ||
           (allowed && !allowed.includes(entry.layer)) ||
-          (entry.scope === "project" && !envelope.context.activeProject) ||
+          (entry.scope === "project" && !envelope.context.activeProject &&
+            !(group === "changes" && action.kind === "propose_project")) ||
           !bounded(entry.text, 400) || !bounded(entry.rationale, 240) || !validSources(entry.sources, true)) {
         throw new Error("Invalid scoped awake update or evidence.");
       }
@@ -244,9 +297,31 @@ export function validateAwake(awake, envelope) {
   }
 }
 
+export function projectPreview(envelope, awake) {
+  const { action, changes } = awake;
+  if (action.kind !== "propose_project" || action.uncertainty !== null ||
+      !action.sources.includes(envelope.user.source) || !stableId(action.target)) return null;
+  const args = Object.fromEntries(action.arguments.map(arg => [arg.name, arg.value]));
+  if (Object.keys(args).length !== 2 || !bounded(args.name, 120) || !["fictional", "real"].includes(args.scope)) return null;
+  const visible = new Map([...envelope.memory.recent, envelope.user].map(message => [message.source, message]));
+  const selected = changes.filter(change => change.scope === "project");
+  if (!selected.length || selected.some(change => change.sources.some(ref => !visible.has(ref)))) return null;
+  const seed = emptyContinuity();
+  const evidence = new Map();
+  for (const change of selected) {
+    if (seed[change.layer].length === 4) return null;
+    for (const ref of change.sources) evidence.set(ref, visible.get(ref));
+    seed[change.layer].push({ source: change.sources[0], text: change.text, sources: change.sources });
+  }
+  const entry = { id: action.target, name: args.name.trim(), description: args.name.trim(), status: "active",
+    routingSummary: args.name.trim(), scope: args.scope };
+  evidence.set(envelope.user.source, envelope.user);
+  return { entry, continuity: seed, evidence: [...evidence.values()], authorizationSource: envelope.user.source };
+}
+
 export function journalReceipt(result, supportingTurn) {
   const receipt = result.receipt;
-  if (!receipt || receipt.outcome.status === "excluded") return undefined;
+  if (!receipt || receipt.outcome.status === "excluded" || receipt.action.kind === "propose_project") return undefined;
   if (!receipt.applied.length && !receipt.proposed.length && !receipt.candidates.length &&
       !receipt.contradictions.length && receipt.action.kind === "just_keep_talking") return undefined;
   const { envelope } = result;
@@ -256,7 +331,8 @@ export function journalReceipt(result, supportingTurn) {
   if (!receipt.action.sources.every(ref => allowed.has(ref))) return undefined;
   const safe = Object.fromEntries(groups.map(group =>
     [group, receipt[group].filter(item => item.sources.every(ref => allowed.has(ref)))]));
-  return { ...receipt, ...safe, contextReferences: envelope.context.references,
+  const { preview, ...journalFields } = receipt;
+  return { ...journalFields, ...safe, contextReferences: envelope.context.references,
     projectId: envelope.context.currentProjectId, userSource: envelope.user.source };
 }
 
@@ -344,7 +420,11 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       } else if (action.kind === "continue_project") {
         outcome = action.target === current && current
           ? { status: "project_continued", projectId: current } : { status: "needs_clarification", route: "project_selection" };
-      } else if (action.kind === "propose_project" || action.kind === "discover_capability") {
+      } else if (action.kind === "propose_project") {
+        const preview = projectPreview(envelope, awake);
+        return { action, outcome: { status: preview ? "confirmation_required" : "proposed", route: "project_creation" },
+          preview, proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
+      } else if (action.kind === "discover_capability") {
         outcome = { status: "proposed", route: action.kind };
       } else if (action.kind === "request_capability") {
         const capability = envelope.context.capabilities.find(entry => entry.id === action.target);

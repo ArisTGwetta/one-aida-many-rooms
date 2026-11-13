@@ -56,6 +56,25 @@ async function setupChat(folderId) {
   const journal = createJournal(folderId, () => token);
   const sleepStore = createSleepStore(folderId, () => token);
   const contextSource = createContextSource(folderId, () => token);
+  const projectPanel = byId("project-preview");
+  const projectData = byId("project-preview-data");
+  const projectStatus = byId("project-save-status");
+  let projectPreview;
+  function clearProjectPreview() {
+    projectPreview = undefined;
+    projectData.textContent = projectStatus.textContent = "";
+    projectPanel.hidden = true;
+  }
+  byId("project-cancel").addEventListener("click", clearProjectPreview);
+  byId("project-confirm").addEventListener("click", () => {
+    if (!projectPreview || !token) return;
+    run("Saving and verifying project…", async () => {
+      const saved = await contextSource.createProject(projectPreview);
+      projectPreview = undefined;
+      projectData.textContent = JSON.stringify(saved, null, 2);
+      return "Project created and verified in Drive.";
+    }, projectStatus);
+  });
   const contextStatus = byId("context-status");
   const contextEvidence = byId("context-evidence");
   function showContextRecords(result) {
@@ -110,6 +129,8 @@ async function setupChat(folderId) {
   let sources = [];
   canSend = () => Boolean(session && !pending);
   refreshJournalControls = () => {
+    byId("project-confirm").disabled = running || !token || !projectPreview;
+    byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
     byId("sleep-controls").disabled = running || !token;
     for (const id of ["journal-resume", "journal-new", "journal-inspect", "journal-older"]) {
@@ -238,6 +259,7 @@ async function setupChat(folderId) {
   }
 
   function resetChat({ id, turns, entries }) {
+    clearProjectPreview();
     conversationId = id;
     conversationField.value = id;
     preceding = undefined;
@@ -321,6 +343,13 @@ async function setupChat(folderId) {
         preceding = undefined;
       }
       const result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded" });
+      if (chosenDisposition === "excluded") clearProjectPreview();
+      if (result.receipt.preview) {
+        projectPreview = result.receipt.preview;
+        projectData.textContent = JSON.stringify(projectPreview, null, 2);
+        projectStatus.textContent = "Review the selected excerpts and continuity before saving.";
+        projectPanel.hidden = false;
+      }
       const turn = { ...result.turn, conversationId };
       appendExchange(turn);
       disposition = chosenDisposition;
@@ -360,7 +389,8 @@ async function setupChat(folderId) {
       }
       const outcome = result.receipt.outcome.status;
       return {
-        confirmation_required: "Capability request recorded. It requires your confirmation.",
+        confirmation_required: result.receipt.preview ? "Project preview is ready for confirmation." :
+          "Capability request recorded. It requires your confirmation.",
         proposed: "Request proposed for review.",
         unavailable: "The requested capability is unavailable.",
         invalid_arguments: "The capability request is missing valid arguments.",
@@ -370,6 +400,7 @@ async function setupChat(folderId) {
     }, chatStatus);
   });
   return async () => {
+    clearProjectPreview();
     contextStatus.textContent = contextEvidence.textContent = "";
     contextEvidence.hidden = true;
     clearSleepPanel();
