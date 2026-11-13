@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createConversationSession } from "./conversation.mjs";
+import { ConversationValidationError, createConversationSession } from "./conversation.mjs";
 import { createProviders, openAIModel } from "./providers.mjs";
 
 const record = { id: "record-1", text: "I take the early ferry on Fridays.", updated_at: "2026-01-01T12:00:00.000Z" };
@@ -110,5 +110,8 @@ test("missing memory is explicit in the model input, and invalid responses are r
   });
   assert.match((await session.send("What did I tell you?")).response.reply, /don't have/);
   invalid = true;
-  await assert.rejects(session.send("What did I tell you?"), /provider failed/);
+  await assert.rejects(session.send("What did I tell you?"), {
+    constructor: ConversationValidationError,
+    message: /Conversation response validation failed/
+  });
 });

@@ -1,5 +1,5 @@
 import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
-import { createConversationSession, ConversationTransportError } from "./conversation.mjs";
+import { createConversationSession, ConversationTransportError, ConversationValidationError } from "./conversation.mjs";
 import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
 import { setupSleepPanel } from "./sleep-panel.mjs";
 import { createSleepStore } from "./sleep.mjs";
@@ -43,6 +43,9 @@ async function run(label, action, target = status) {
       browserKey = undefined;
     }
     target.textContent = error.message;
+    if (target.id === "chat-status" && !byId("conversation-details").hidden) {
+      byId("conversation-evidence-label").textContent = "Development evidence — last successful turn";
+    }
   } finally {
     running = false;
     connect.disabled = false;
@@ -187,7 +190,10 @@ async function setupChat(folderId) {
         body: JSON.stringify(input)
       });
       const result = await response.json();
-      if (!response.ok) throw new ConversationTransportError(result.error ?? "The local server rejected the request.");
+      if (!response.ok) {
+        if (result.code === "conversation_validation") throw new ConversationValidationError(result.error);
+        throw new ConversationTransportError(result.error ?? "The local server rejected the request.");
+      }
       return result;
     }
     try {
@@ -364,6 +370,7 @@ async function setupChat(folderId) {
         stewardReceipt: result.receipt
       }, null, 2);
       details.hidden = false;
+      byId("conversation-evidence-label").textContent = "Development evidence";
       if (message.value === submitted) message.value = "";
       retention.value = "auto";
       if (disposition === "candidate" || disposition === "provisional") {

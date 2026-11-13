@@ -273,23 +273,35 @@ test("owned context initialization survives interruption and flags missing, malf
   global.record.short = [];
 
   let selectStory = false;
+  let candidateSource;
+  let actionKind = "propose_project";
   const session = chat(createAwakeSteward(open()), envelope => {
     if (!selectStory) return answer(envelope);
     const story = envelope.memory.recent.find(item => item.text === "The scouts guard the gate until dawn.");
     return answer(envelope, {
-      action: requested(envelope, "propose_project", "fictional-gate", {
+      action: requested(envelope, actionKind, "fictional-gate", {
         arguments: [{ name: "name", value: "Fictional Gate" }, { name: "scope", value: "fictional" }]
       }),
       rebuild: "project_change",
       changes: [
         { scope: "project", layer: "short", text: "The scouts guard the gate until dawn.", sources: [story.source], rationale: "Current situation." },
         { scope: "global", layer: "short", text: "Unrelated global change.", sources: [envelope.user.source], rationale: "Must stay out." }
-      ]
+      ],
+      candidates: ["facts", "insights"].map(layer => ({
+        scope: "project", layer, text: "Candidate only.",
+        sources: [candidateSource ?? story.source], rationale: "A provisional reading of the story."
+      }))
     });
   });
   await session.send("What is seven times eight?");
   await session.send("The scouts guard the gate until dawn.");
   selectStory = true;
+  candidateSource = "turn:fabricated:user";
+  await assert.rejects(session.send("Create Fictional Gate."), /validation failed.*source|validation failed.*evidence/);
+  candidateSource = undefined;
+  actionKind = "just_keep_talking";
+  await assert.rejects(session.send("Continue."), /validation failed.*scoped awake/);
+  actionKind = "propose_project";
   const proposed = await session.send("I changed my mind. Create Fictional Gate and preserve the story.");
   const { preview } = proposed.receipt;
   assert.equal(proposed.receipt.outcome.status, "confirmation_required");
@@ -301,6 +313,10 @@ test("owned context initialization survives interruption and flags missing, malf
   assert.deepEqual(preview.continuity.short[0].sources, [preview.evidence[0].source]);
   assert.deepEqual(preview.continuity.long, []);
   assert.deepEqual(preview.continuity.recent, []);
+  assert.equal(proposed.response.awake.candidates.length, 2);
+  assert.deepEqual(preview.continuity.facts, []);
+  assert.deepEqual(preview.continuity.insights, []);
+  assert.ok(!JSON.stringify(preview).includes("Candidate only."));
   assert.equal(journalReceipt(proposed)?.preview, undefined);
 
   failCatalogUpdate = true;
@@ -314,6 +330,9 @@ test("owned context initialization survives interruption and flags missing, malf
   const record = docs.get(saved.continuityReference.slice(6)).record;
   assert.deepEqual(record.evidence, preview.evidence);
   assert.deepEqual(record.short, preview.continuity.short);
+  assert.deepEqual(record.facts, []);
+  assert.deepEqual(record.insights, []);
+  assert.ok(!JSON.stringify(record).includes("Candidate only."));
   assert.deepEqual(global.record.short, []);
   await assert.rejects(open().createProject({ ...preview, continuity: {
     ...preview.continuity, short: [{ ...preview.continuity.short[0], text: "A dragon appeared." }]

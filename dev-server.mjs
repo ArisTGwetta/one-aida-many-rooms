@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createProviders, maxEnvelopeBytes, openAIModel, ProviderError } from "./providers.mjs";
+import { ConversationValidationError } from "./conversation.mjs";
 
 const host = "127.0.0.1";
 const port = 8787;
@@ -80,6 +81,9 @@ export async function handleRequest(request, response) {
     if (!input || typeof input !== "object") return send(response, 400, { error: "Invalid conversation request." });
     send(response, 200, await provider(input));
   } catch (error) {
+    if (error instanceof ConversationValidationError) {
+      return send(response, 502, { error: error.message, code: "conversation_validation" });
+    }
     send(response, 502, { error: error instanceof ProviderError
       ? error.message : "The provider reply did not match the requested contract." });
   } finally {

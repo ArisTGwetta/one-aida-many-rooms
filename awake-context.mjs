@@ -289,7 +289,7 @@ export function validateAwake(awake, envelope) {
       if (!exact(entry, fields) || !["global", "project"].includes(entry.scope) ||
           (allowed && !allowed.includes(entry.layer)) ||
           (entry.scope === "project" && !envelope.context.activeProject &&
-            !(group === "changes" && action.kind === "propose_project")) ||
+            !(allowed && action.kind === "propose_project")) ||
           !bounded(entry.text, 400) || !bounded(entry.rationale, 240) || !validSources(entry.sources, true)) {
         throw new Error("Invalid scoped awake update or evidence.");
       }

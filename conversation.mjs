@@ -2,6 +2,7 @@ import { validateAwake } from "./awake-context.mjs";
 
 export const conversationVersion = "0.2";
 export class ConversationTransportError extends Error {}
+export class ConversationValidationError extends Error {}
 const recentLimit = 6;
 const memoryKinds = ["facts", "insights", "short", "long"];
 const intents = ["conversation", "recall", "memory_update", "tool_request"];
@@ -28,6 +29,15 @@ function validateAffect(affect) {
 }
 
 export function parseConversationResponse(raw, envelope) {
+  try {
+    return validateConversationResponse(raw, envelope);
+  } catch (error) {
+    const reason = error.constructor === Error ? error.message : "The response could not be validated.";
+    throw new ConversationValidationError(`Conversation response validation failed. ${reason}`);
+  }
+}
+
+function validateConversationResponse(raw, envelope) {
   let output;
   try {
     output = JSON.parse(raw);
@@ -122,7 +132,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         try {
           raw = await provider(structuredClone(envelope));
         } catch (error) {
-          if (error instanceof ConversationTransportError) throw error;
+          if (error instanceof ConversationTransportError || error instanceof ConversationValidationError) throw error;
           throw new Error("The conversation provider failed. Try again.");
         }
         const response = parseConversationResponse(raw, envelope);
