@@ -29,6 +29,7 @@ export const awakeInstructions = [
   "Return the awake section. Default to just_keep_talking when conversation needs no action.",
   "Use ask_for_help when uncertain. An implied request can propose a capability, but never grants permission.",
   "Use switch_project only when the user asks to switch and cite the current user message. A mention is not a switch.",
+  "When context.projectSelection is present, the steward already loaded the requested project. Use its continuity in this reply.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
   "For an explicit request to create a project from this conversation, use propose_project with a stable slug target and arguments name and scope (fictional or real).",
@@ -336,6 +337,11 @@ export function journalReceipt(result, supportingTurn) {
     projectId: envelope.context.currentProjectId, userSource: envelope.user.source };
 }
 
+function requestedProject(text) {
+  return /^\s*(?:aida\s*,\s*)?(?:please\s+)?(?:let['’]s\s+)?(?:return to|go back to|switch to|open project|select project|change project to|resume project)\s+(.+?)\s*[.!?]?\s*$/i
+    .exec(text)?.[1].trim().toLowerCase();
+}
+
 export function createAwakeSteward(source, { turns = 4, contextChars = 12000, recoveredTurns = [] } = {}) {
   let base;
   let activeId = null;
@@ -373,24 +379,45 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   }
 
   return {
-    async assemble(recent) {
-      if (!base || refreshNext || sourceRevision !== source.revision) {
+    async assemble(recent, user) {
+      const requested = requestedProject(user?.text ?? "");
+      if (!base || requested || refreshNext || sourceRevision !== source.revision) {
         base = await source.load();
         sourceRevision = source.revision;
         if (activeId && !base.projects.some(entry => entry.id === activeId)) activeId = null;
         project = undefined;
         refreshNext = false;
       }
-      const entry = base.projects.find(item => item.id === activeId);
-      if (entry && !project) project = await source.project(entry.id);
+      let selected;
+      if (requested) {
+        const matches = base.projects.filter(entry => [entry.id, entry.name.toLowerCase()].some(name =>
+          requested === name || requested === `project ${name}`));
+        if (matches.length > 1) throw new Error(`Which project did you mean? Use its project ID: ${matches.map(entry => entry.id).join(", ")}.`);
+        if (!matches.length) throw new Error("No registered project matches that request. Use its exact name or project ID.");
+        [selected] = matches;
+      }
+      const entry = selected ?? base.projects.find(item => item.id === activeId);
+      let loaded = project;
+      if (selected) {
+        try {
+          loaded = await source.project(selected.id);
+          if (!loaded.reference) throw new Error("The dedicated continuity record is missing.");
+        } catch (error) {
+          throw Object.assign(new Error(`Cannot load project continuity for ${selected.name}. ${error.message}`), { status: error.status });
+        }
+        project = activeId === selected.id ? loaded : undefined;
+      } else if (entry && !loaded) {
+        project = loaded = await source.project(entry.id);
+      }
       const global = track("global", base.global);
-      const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, project.continuity) } : null;
+      const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, loaded.continuity) } : null;
       const size = JSON.stringify({ global, activeProject, recent }).length;
       return {
-        global, activeProject, currentProjectId: activeId,
-        likelyProjectId: activeId ?? base.likelyProjectId ?? null,
+        global, activeProject, currentProjectId: entry?.id ?? null,
+        likelyProjectId: entry?.id ?? base.likelyProjectId ?? null,
+        ...(selected ? { projectSelection: { projectId: selected.id, source: user.source } } : {}),
         projects: base.projects, capabilities: base.capabilities,
-        references: [...base.references, project?.reference].filter(Boolean),
+        references: [...base.references, loaded?.reference].filter(Boolean),
         refresh: { due: count >= turns || (size >= contextChars && size > sizeAtRefresh), turnsSinceRefresh: count, contextChars: size }
       };
     },
@@ -402,21 +429,13 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       let outcome = { status: "conversation", route: "conversation" };
       if (!allowUpdates) return { action, outcome: { status: "excluded" }, applied: [] };
       count++;
-      if (action.uncertainty !== null || action.kind === "ask_for_help") {
+      if (envelope.context.projectSelection) {
+        activeId = current;
+        outcome = { status: "project_selected", projectId: current };
+      } else if (action.uncertainty !== null || action.kind === "ask_for_help") {
         outcome = { status: "needs_clarification", route: "clarification" };
       } else if (action.kind === "switch_project") {
-        const target = envelope.context.projects.find(entry => entry.id === action.target);
-        const requested = /^\s*(?:please\s+|let['’]s\s+)?(?:switch to|open project|select project|change project to|resume project)\s+(?:project\s+)?(.+?)\s*[.!?]?\s*$/i
-          .exec(envelope.user.text)?.[1].toLowerCase();
-        const exactTarget = target && [target.id, target.name.toLowerCase()].includes(requested);
-        if (exactTarget && action.sources.includes(envelope.user.source)) {
-          activeId = action.target;
-          project = undefined;
-          refreshNext = true;
-          outcome = { status: "project_selected", projectId: activeId };
-        } else {
-          outcome = { status: "needs_clarification", route: "project_selection" };
-        }
+        outcome = { status: "needs_clarification", route: "project_selection" };
       } else if (action.kind === "continue_project") {
         outcome = action.target === current && current
           ? { status: "project_continued", projectId: current } : { status: "needs_clarification", route: "project_selection" };

@@ -109,7 +109,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const order = Math.max(Date.parse(startedAt), lastOrder + 1);
         const [saved, canonical] = await Promise.all([memoryStore.recall(), loadCanonicalFacts()]);
         const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
-        const context = steward ? await steward.assemble(recent) : undefined;
+        const context = steward ? await steward.assemble(recent, user) : undefined;
         const envelope = {
           version: conversationVersion,
           identity: { name: "Aida", relationship: "The user's ongoing conversational companion." },

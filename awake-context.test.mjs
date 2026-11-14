@@ -37,6 +37,7 @@ function fixture(docs = files) {
       }
       const id = parsed.pathname.split("/").at(-1);
       const doc = docs[id + ".json"];
+      if (doc?.unreadable) return new Response(null, { status: 403 });
       const seed = doc.projects || doc.capabilities ? {} : { long: [], short: [], recent: [], facts: [], insights: [] };
       return Response.json({ schema_version: 1, ...seed, ...doc });
     })
@@ -108,7 +109,7 @@ test("project selection requires a known stable ID and an explicit switch; scope
     return answer(envelope);
   });
   assert.equal((await session.send("Atlas is interesting")).receipt.outcome.status, "needs_clarification");
-  assert.equal((await session.send("Switch to Imaginary Atlas-not")).receipt.outcome.status, "needs_clarification");
+  await assert.rejects(session.send("Switch to Imaginary Atlas-not"), /No registered project/);
   assert.ok(!reads.includes("aida-context-project-atlas.json"));
   const selected = await session.send("Switch to Atlas");
   assert.equal(selected.receipt.outcome.projectId, "atlas");
@@ -123,6 +124,57 @@ test("project selection requires a known stable ID and an explicit switch; scope
   const restoredContext = await restored.assemble([]);
   assert.equal(restoredContext.currentProjectId, "atlas");
   assert.equal(restoredContext.activeProject.continuity.short.at(-1).text, "Survey the west side next.");
+});
+
+test("fresh Lighthouse return sends verified project continuity and global context on the first model call", async () => {
+  const id = "the-clockwork-lighthouse";
+  const name = "The Clockwork Lighthouse";
+  const path = `aida-context-project-${id}.json`;
+  const entry = { id, name, description: "Fictional fixture.", status: "active", routingSummary: "Lighthouse story." };
+  const short = { source: "fixture:lighthouse", text: "The lighthouse clock stopped at midnight." };
+  const docs = { ...files, "aida-context-projects.json": { projects: [entry] }, [path]: { projectId: id, short: [short] } };
+  const phrase = "Aida, let's return to The Clockwork Lighthouse.";
+  const { source, reads } = fixture(docs);
+  let calls = 0;
+  const provider = createProviders({ apiKey: "fixture-key", async fetchRequest(_url, options) {
+    calls++;
+    const envelope = JSON.parse(JSON.parse(options.body).input);
+    assert.equal(envelope.identity.name, "Aida");
+    assert.equal(envelope.context.currentProjectId, id);
+    assert.deepEqual(envelope.context.activeProject.continuity.short, [short]);
+    assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+    assert.ok(envelope.context.references.includes(`drive:${path.replace(/\.json$/, "")}`));
+    assert.equal(envelope.memory.facts[0].text, "Original memory.");
+    return Response.json({ status: "completed", output: [{ type: "message", content: [
+      { type: "output_text", text: JSON.stringify(answer(envelope)) }
+    ] }] });
+  } });
+  const session = createConversationSession({
+    steward: createAwakeSteward(source),
+    memoryStore: { recall: async () => ({ fileId: "first", record: { id: "first", text: "Original memory." } }) },
+    provider: async envelope => (await provider({ provider: "openai", model: openAIModel, envelope })).raw
+  });
+  assert.equal((await session.send(phrase)).receipt.outcome.projectId, id);
+  assert.equal(calls, 1);
+  await session.send("What happens now?");
+  assert.equal(calls, 2);
+  assert.ok(reads.includes(path));
+
+  const mention = fixture(docs);
+  await chat(createAwakeSteward(mention.source), envelope => {
+    assert.equal(envelope.context.currentProjectId, null);
+    return answer(envelope);
+  }).send("I remember The Clockwork Lighthouse.");
+  assert.ok(!mention.reads.includes(path));
+
+  const noCall = () => assert.fail("The model must not receive unresolved continuity");
+  const duplicate = fixture({ ...docs, "aida-context-projects.json": { projects: [entry, { ...entry, id: "other" }] } });
+  await assert.rejects(chat(createAwakeSteward(duplicate.source), noCall).send(phrase), /Which project.*other/);
+  for (const continuity of [null, { projectId: id, unreadable: true }, { projectId: "wrong" }]) {
+    const broken = fixture({ ...docs, [path]: continuity });
+    await assert.rejects(chat(createAwakeSteward(broken.source), noCall).send(phrase),
+      /Cannot load project continuity.*(?:missing|refused|mismatch)/);
+  }
 });
 
 test("explicit and implied capability requests are proposals with mechanical checks and no external execution", async () => {
