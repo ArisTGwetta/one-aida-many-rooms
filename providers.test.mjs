@@ -13,10 +13,12 @@ const output = envelope => JSON.stringify({
 
 test("switching from OpenAI to Ollama retains identity, Drive evidence, history and affect", async () => {
   const received = [];
+  const prompts = [];
   const invoke = createProviders({
     apiKey: "fixture-key", ollamaEndpoint: "http://127.0.0.1:11434",
     async fetchRequest(url, options) {
       const body = JSON.parse(options.body);
+      prompts.push(body.instructions ?? body.messages[0].content);
       if (url === "https://api.openai.com/v1/responses") {
         assert.equal(options.headers.Authorization, "Bearer fixture-key");
         assert.equal(body.model, openAIModel);
@@ -66,6 +68,11 @@ test("switching from OpenAI to Ollama retains identity, Drive evidence, history 
   assert.deepEqual(received[1].affect, first.response.affect);
   assert.deepEqual(received[1].memory.recent.map(entry => entry.text), [received[0].user.text, first.response.reply]);
   assert.deepEqual(second.response, first.response);
+  assert.equal(prompts.length, 2);
+  assert.equal(prompts[0], prompts[1]);
+  const rule = "Ground claims about memories, retrieved facts, source evidence, completed actions, and tool results in the supplied records and verified results. Never fabricate them. Distinguish user statements from independently verified external facts, and distinguish what you infer, what remains uncertain, and what you invent. When the user invites storytelling, roleplay, or brainstorming, use imagination freely within that scope. Preserve established fictional continuity unless the user explicitly authorizes a change. Treat new creative material as draft story content until explicitly adopted, and use the existing memory or confirmation process to make it durable. Ask for clarification when the distinction genuinely affects the answer or what should be retained.";
+  assert.equal(prompts[0].split(rule).length, 2);
+  assert.ok(prompts[0].includes("Attribute user-entered facts to the user. " + rule));
 });
 
 test("provider errors are explicit and no fallback is called", async () => {
