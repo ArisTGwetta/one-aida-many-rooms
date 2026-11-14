@@ -280,7 +280,17 @@ async function setupChat(folderId) {
   function appendExchange(turn) {
     for (const [speaker, text] of [["You", turn.user.text], ["Aida", turn.aida.text]]) {
       const line = document.createElement("p");
-      line.textContent = `${speaker}: ${text}`;
+      const name = document.createElement("span");
+      name.textContent = speaker + ": ";
+      if (speaker === "You") {
+        name.className = "classic-speaker";
+        const mobileName = document.createElement("span");
+        mobileName.className = "mobile-speaker";
+        mobileName.textContent = "Francisco: ";
+        line.append(mobileName);
+      }
+      line.append(name, text);
+      line.dataset.speaker = speaker === "Aida" ? "aida" : "francisco";
       transcript.append(line);
     }
   }

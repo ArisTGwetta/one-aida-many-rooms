@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Aida · First Memory</title>
   <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./mobile-view.css">
   <script type="module" src="./app.mjs"></script>
+  <script type="module" src="./mobile-view.mjs"></script>
 </head>
 <body>
   <main>
     <header>
-      <h1>Aida</h1>
+      <h1>Aida</h1><button id="open-mobile" type="button">Try mobile view</button>
       <p>Save one fact to Google Drive and recall it from another device.</p>
     </header>
     <form id="memory-form">
@@ -122,5 +124,30 @@
       </details>
     </section>
   </main>
+  <section id="mobile-room" aria-label="Aida mobile view" hidden>
+    <div class="mobile-header"><h2>Aida</h2><button id="close-mobile" type="button">Classic view</button></div>
+    <div id="mobile-history"></div>
+    <div class="mobile-lower">
+      <div id="aida-visual" aria-label="Aida’s visual display"></div>
+      <div id="mobile-compose"></div>
+    </div>
+    <nav aria-label="Mobile controls">
+      <button id="mobile-sleep" type="button">Sleep</button>
+      <button id="mobile-chat" type="button">Chat</button>
+      <button id="mobile-menu" type="button" aria-expanded="false" aria-controls="mobile-settings">Menu</button>
+    </nav>
+  </section>
+  <aside id="mobile-settings" aria-label="Mobile settings" hidden>
+    <button id="close-mobile-settings" type="button">Back to chat</button>
+    <label for="mobile-theme">Appearance</label>
+    <select id="mobile-theme">
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+    <label for="mobile-text-size">Message text size</label>
+    <select id="mobile-text-size"><option value="regular">Regular</option><option value="large">Large</option></select>
+    <div id="mobile-settings-content"></div>
+  </aside>
 </body>
 </html>

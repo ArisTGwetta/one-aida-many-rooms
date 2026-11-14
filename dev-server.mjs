@@ -11,7 +11,8 @@ const origin = `http://${authority}`;
 const routes = new Map([
   ["/", ["index.html", "text/html"]],
   ["/style.css", ["style.css", "text/css"]],
-  ...["app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
+  ["/mobile-view.css", ["mobile-view.css", "text/css"]],
+  ...["mobile-view.mjs", "app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
     .map(name => [`/${name}`, [name, "text/javascript"]])
 ]);
 const provider = createProviders({

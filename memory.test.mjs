@@ -154,8 +154,8 @@ test("folder mismatch, HTTP errors and invalid JSON fail before a write", async 
 
 test("runtime entry points and references stay inside the new workspace", async () => {
   const page = await readFile(new URL("./index.html", import.meta.url), "utf8");
-  assert.deepEqual([...page.matchAll(/(?:src|href)="([^"]+)"/g)].map(match => match[1]), ["./style.css", "./app.mjs"]);
-  for (const file of ["index.html", "style.css", "app.mjs", "memory.mjs", "oauth.config.json"]) {
+  assert.deepEqual([...page.matchAll(/(?:src|href)="([^"]+)"/g)].map(match => match[1]), ["./style.css", "./mobile-view.css", "./app.mjs", "./mobile-view.mjs"]);
+  for (const file of ["index.html", "style.css", "mobile-view.css", "mobile-view.mjs", "app.mjs", "memory.mjs", "oauth.config.json"]) {
     const content = await readFile(new URL("./" + file, import.meta.url), "utf8");
     assert.doesNotMatch(content, /\.\.\/|file:\/\/|AIDA_NEXT|AIDA_ONE_SPINE|francisco-aida|G:\\\\|\/Aida_mobile\//);
   }
