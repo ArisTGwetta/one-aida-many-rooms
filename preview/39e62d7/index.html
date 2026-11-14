@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aida · First Memory</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Aida</h1>
+      <p>Save one fact to Google Drive and recall it from another device.</p>
+    </header>
+    <form id="memory-form">
+      <button id="connect" type="button" disabled>Authorize Google Drive</button>
+      <label for="memory">What should Aida remember?</label>
+      <textarea id="memory" rows="4" maxlength="4000" required></textarea>
+      <div class="actions">
+        <button id="remember" disabled>Remember</button>
+        <button id="recall" type="button" disabled>Recall</button>
+      </div>
+      <p id="status" role="status">Loading configuration…</p>
+    </form>
+    <section id="evidence" hidden aria-labelledby="evidence-title">
+      <h2 id="evidence-title">Drive evidence</h2>
+      <dl>
+        <dt>Drive file ID</dt><dd id="file-id"></dd>
+        <dt>Saved at (UTC)</dt><dd id="saved-at"></dd>
+      </dl>
+      <pre id="record"></pre>
+    </section>
+    <section id="chat" hidden aria-labelledby="chat-title">
+      <h2 id="chat-title">Talk to Aida</h2>
+      <form id="chat-form">
+        <label for="provider">Provider</label>
+        <select id="provider">
+          <option value="openai">OpenAI API</option>
+          <option value="ollama">Ollama</option>
+        </select>
+        <label for="model">Model</label>
+        <input id="model" maxlength="100" required>
+        <div id="ollama-endpoint-field" hidden>
+          <label for="ollama-endpoint">Ollama endpoint</label>
+          <input id="ollama-endpoint" type="url" maxlength="300" placeholder="https://ollama.example">
+        </div>
+        <div id="route-code-field" hidden>
+          <label for="route-code">OpenAI route code</label>
+          <input id="route-code" type="password" inputmode="numeric" maxlength="3" autocomplete="off">
+        </div>
+        <p id="provider-status"></p>
+        <div id="transcript" role="log" aria-label="Conversation"></div>
+        <label for="message">Message</label>
+        <textarea id="message" rows="3" maxlength="4000" required></textarea>
+        <label for="retention">Keep this exchange</label>
+        <select id="retention">
+          <option value="auto">This page only, unless I ask to remember</option>
+          <option value="provisional">Temporarily in Drive (24 hours)</option>
+          <option value="candidate">Save to the Drive journal</option>
+          <option value="exclude">Leave out of future context</option>
+        </select>
+        <label id="support-label" hidden><input type="checkbox" id="journal-support"> Include the preceding eligible exchange as supporting context</label>
+        <button id="send" disabled>Send</button>
+        <p id="chat-status" role="status"></p>
+      </form>
+      <details id="journal">
+        <summary>RECENT journal</summary>
+        <p id="journal-status" role="status">Authorize Drive to recover saved exchanges.</p>
+        <p id="journal-context"></p>
+        <label for="conversation-id">Conversation ID</label>
+        <input id="conversation-id" maxlength="36">
+        <div class="actions">
+          <button id="journal-resume" type="button" disabled>Resume</button>
+          <button id="journal-new" type="button" disabled>New conversation</button>
+          <button id="journal-inspect" type="button" disabled>Inspect saved exchanges</button>
+          <button id="journal-older" type="button" hidden>Older entries</button>
+          <button id="journal-retry" type="button" hidden>Retry journal save</button>
+        </div>
+        <pre id="journal-records" hidden></pre>
+      </details>
+      <details id="context-records">
+        <summary>Drive context records</summary>
+        <fieldset id="context-controls" disabled>
+          <legend>Context initialization</legend>
+          <button id="context-check" type="button">Check context records</button>
+          <button id="context-init" type="button">Initialize empty context records</button>
+          <label for="context-project-id">Registered project ID</label>
+          <input id="context-project-id" maxlength="64">
+          <button id="context-project-init" type="button">Initialize project continuity</button>
+          <p id="context-status" role="status"></p>
+          <pre id="context-evidence" hidden></pre>
+        </fieldset>
+      </details>
+      <section id="project-preview" hidden aria-labelledby="project-preview-title">
+        <h2 id="project-preview-title">Review capability proposal</h2>
+        <p>Only the continuity and source excerpts shown below will be saved for this project.</p>
+        <pre id="project-preview-data"></pre>
+        <button id="project-confirm" type="button">Confirm proposal</button>
+        <button id="project-cancel" type="button">Discard preview</button>
+        <p id="project-save-status" role="status"></p>
+      </section>
+      <details id="sleep-panel">
+        <summary>Sleep and memory proposals</summary>
+        <fieldset id="sleep-controls" disabled>
+          <legend>Sleep cycle</legend>
+          <div class="actions">
+            <button id="sleep-run" type="button">Run sleep cycle</button>
+            <button id="sleep-older" type="button" hidden>Run on older evidence</button>
+            <button id="sleep-queue" type="button">Load review queue</button>
+            <button id="sleep-queue-older" type="button" hidden>Older proposals</button>
+          </div>
+          <p id="sleep-status" role="status"></p>
+          <pre id="sleep-report" hidden></pre>
+          <div id="sleep-proposals"></div>
+        </fieldset>
+      </details>
+      <p id="chat-budget" aria-live="polite"></p>
+      <details id="conversation-details" hidden>
+        <summary id="conversation-evidence-label">Development evidence</summary>
+        <pre id="conversation-evidence"></pre>
+      </details>
+    </section>
+  </main>
+</body>
+</html>
