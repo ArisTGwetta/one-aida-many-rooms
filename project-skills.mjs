@@ -8,7 +8,6 @@ const names = (text, entry) => [entry.id, entry.name].some(name =>
   (" " + words(text) + " ").includes(" " + words(name) + " "));
 const targetMatches = (target, entry) => [entry.id, entry.name.toLowerCase()].some(name => target === name || target === "project " + name);
 const detail = /^(?:aida\s*,\s*)?(?:please\s+)?(?:what|who|when|where|why|how|which|did|do|does|is|are|was|were|can|could|would|tell me|remind me|show me|recap|summarize|look up)\b/iu;
-const request = (id, input) => ({ id, version, input });
 const clarification = "Which project did you mean? Use its project ID.";
 const findArgs = [
   { name: "projectId", description: "Registered project ID.", required: true, type: "string" },
@@ -21,9 +20,9 @@ export function deterministicProjectRequest(user, projects) {
   if (!target && !detail.test(user.text)) return null;
   const matches = projects.filter(entry => target ? targetMatches(target, entry) : names(user.text, entry));
   if (matches.length > 1) throw new Error(clarification);
-  return matches.length ? request("find_project", {
+  return matches.length ? {
     projectId: matches[0].id, operation: target ? "enter" : "lookup", evidence: user.text
-  }) : null;
+  } : null;
 }
 
 export function attachProjectResult(context, { operation, project, reference }) {
@@ -66,10 +65,20 @@ export function projectPreview(envelope, awake) {
   return { entry, continuity: seed, evidence: [...evidence.values()], authorizationSource: envelope.user.source };
 }
 
-export function projectSkills(source) {
+export function projectSkills(source, additionalBindings = []) {
   return createSkillRegistry([
     {
       descriptor: skillDescriptor("find_project", version, "read", "Read one project's scoped continuity before answering.", findArgs),
+      available: ({ projects, currentProjectId }) => projects.some(entry => entry.id !== currentProjectId),
+      plan: ({ user, context }) => user && deterministicProjectRequest(user, context.projects),
+      action: ({ envelope, awake }) => {
+        const { action } = awake;
+        const current = envelope.context.currentProjectId;
+        if (action.kind === "switch_project") return { status: "needs_clarification", route: "project_selection" };
+        if (action.kind === "continue_project") return action.target === current && current
+          ? { status: "project_continued", projectId: current }
+          : { status: "needs_clarification", route: "project_selection" };
+      },
       validate: input => input && Object.keys(input).length === 3 &&
         typeof input.projectId === "string" && ["lookup", "enter"].includes(input.operation) &&
         typeof input.evidence === "string" && input.evidence.trim() && input.evidence.length <= 4000,
@@ -106,6 +115,9 @@ export function projectSkills(source) {
           { name: "name", description: "Project name.", required: true, type: "string" },
           { name: "scope", description: "fictional or real.", required: true, type: "string" }
         ]),
+      plan: ({ awake }) => awake?.action.kind === "propose_project" ? { phase: "preview" } : null,
+      action: ({ awake }) => awake.action.kind === "propose_project"
+        ? { status: "unavailable", route: "project_creation", suppressUpdates: true } : null,
       validate: input => input?.phase === "preview" || input?.phase === "confirm",
       authorize: (input, context) => input.phase === "preview" ? Boolean(context.envelope && context.awake) :
         Boolean(context.confirmed && input.preview),
@@ -114,6 +126,7 @@ export function projectSkills(source) {
       validateResult: result => result && (result.preview === null || Boolean(result.preview?.entry?.id) ||
         (typeof result.projectId === "string" && typeof result.continuityReference === "string" &&
           typeof result.catalogReference === "string"))
-    }
+    },
+    ...additionalBindings
   ]);
 }

@@ -1,3 +1,5 @@
+import { projectSkills } from "./project-skills.mjs";
+import { skillDescriptor } from "./skill-registry.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAwakeSteward, createContextSource, journalReceipt } from "./awake-context.mjs";
@@ -520,4 +522,38 @@ test("named detail requests read only the selected fictional project without ent
     await assert.rejects(chat(createAwakeSteward(broken.source), noCall).send(question), error =>
       /(?:missing|refused|mismatch)/.test(error.message));
   }
+});
+
+test("an independently registered third capability can preload or dispatch without Director changes", async () => {
+  const { source, reads } = fixture();
+  let executions = 0;
+  const descriptor = skillDescriptor("fixture_status", 2, "read", "Read a synthetic status.", []);
+  const skills = projectSkills(source, [{
+    descriptor,
+    plan: ({ user }) => user?.text === "Show fixture status" ? {} : null,
+    validate: input => input && Object.keys(input).length === 0,
+    authorize: (_input, { user }) => user.text.includes("status"),
+    run() { executions++; return { value: "ready" }; },
+    validateResult: result => result.value === "ready"
+  }]);
+  let calls = 0;
+  const session = chat(createAwakeSteward(source, { skills }), envelope => {
+    calls++;
+    assert.equal(envelope.identity.name, "Aida");
+    assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+    assert.ok(envelope.context.capabilities.some(item => item.id === descriptor.id && item.version === 2));
+    if (calls === 2) {
+      return { skillRequest: { id: descriptor.id, version: 2, input: {} } };
+    }
+    assert.deepEqual(envelope.context.skillResult, { value: "ready" });
+    assert.equal(envelope.context.retrievalComplete, true);
+    assert.equal(envelope.context.currentProjectId, null);
+    return answer(envelope);
+  });
+  await session.send("Show fixture status");
+  assert.equal(calls, 1);
+  await session.send("Could you check fixture status?");
+  assert.equal(calls, 3);
+  assert.equal(executions, 2);
+  assert.ok(!reads.includes("aida-context-project-atlas.json"));
 });

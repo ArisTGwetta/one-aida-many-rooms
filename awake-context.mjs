@@ -1,4 +1,4 @@
-import { projectSkills, deterministicProjectRequest } from "./project-skills.mjs";
+import { projectSkills } from "./project-skills.mjs";
 import { createDriveClient } from "./memory.mjs";
 
 const layers = ["long", "short", "recent", "facts", "insights"];
@@ -317,8 +317,7 @@ export function journalReceipt(result, supportingTurn) {
     projectId: envelope.context.currentProjectId, userSource: envelope.user.source };
 }
 
-export function createAwakeSteward(source, { turns = 4, contextChars = 12000, recoveredTurns = [] } = {}) {
-  const skills = projectSkills(source);
+export function createAwakeSteward(source, { turns = 4, contextChars = 12000, recoveredTurns = [], skills = projectSkills(source) } = {}) {
   let pendingPreview;
   let pendingWrite;
   let base;
@@ -370,8 +369,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       const global = track("global", base.global);
       const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, project.continuity) } : null;
       const size = JSON.stringify({ global, activeProject, recent }).length;
-      const capabilities = skills.catalog(base.capabilities).filter(skill =>
-        skill.phase !== "read" || base.projects.some(entry => entry.id !== activeId));
+      const capabilities = skills.available(base.capabilities, { projects: base.projects, currentProjectId: activeId });
       const context = {
         global, activeProject, currentProjectId: activeId,
         likelyProjectId: activeId ?? base.likelyProjectId ?? null,
@@ -379,9 +377,8 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
         references: [...base.references, project?.reference].filter(Boolean),
         refresh: { due: count >= turns || (size >= contextChars && size > sizeAtRefresh), turnsSinceRefresh: count, contextChars: size }
       };
-      const request = user && deterministicProjectRequest(user, context.projects);
-      return request && context.capabilities.some(skill => skill.id === request.id && skill.version === request.version)
-        ? this.resolveSkill(context, user, request) : context;
+      const request = skills.plan({ user, context }, "read");
+      return request ? this.resolveSkill(context, user, request) : context;
     },
 
     async resolveSkill(context, user, request) {
@@ -394,7 +391,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
     async confirm(preview) {
       if (!pendingPreview || preview !== pendingPreview) throw new Error("Confirm the current project preview.");
-      const result = await skills.dispatch({ id: "create_project", version: 1, input: { phase: "confirm", preview: pendingWrite } },
+      const result = await skills.dispatch(pendingWrite,
         { confirmed: true }, "preview");
       pendingPreview = pendingWrite = undefined;
       return result;
@@ -417,47 +414,40 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
         outcome = { status: "project_selected", projectId: current };
       } else if (action.uncertainty !== null || action.kind === "ask_for_help") {
         outcome = { status: "needs_clarification", route: "clarification" };
-      } else if (action.kind === "switch_project") {
-        const target = envelope.context.projects.find(entry => entry.id === action.target);
-        const requested = /^\s*(?:please\s+|let['’]s\s+)?(?:switch to|open project|select project|change project to|resume project)\s+(?:project\s+)?(.+?)\s*[.!?]?\s*$/i
-          .exec(envelope.user.text)?.[1].toLowerCase();
-        const exactTarget = target && [target.id, target.name.toLowerCase()].includes(requested);
-        if (exactTarget && action.sources.includes(envelope.user.source)) {
-          activeId = action.target;
-          project = undefined;
-          refreshNext = true;
-          outcome = { status: "project_selected", projectId: activeId };
-        } else {
-          outcome = { status: "needs_clarification", route: "project_selection" };
+      } else {
+        const skillContext = { envelope, awake, context: envelope.context };
+        const request = skills.plan(skillContext, "preview");
+        const capabilityOutcome = skills.action(skillContext);
+        if (request) {
+          const { preview } = await skills.dispatch(request, skillContext, "preview");
+          pendingPreview = preview;
+          pendingWrite = preview ? { id: request.id, version: request.version,
+            input: { phase: "confirm", preview: structuredClone(preview) } } : undefined;
+          return { action, outcome: { status: preview ? "confirmation_required" : "proposed", route: request.id },
+            preview, proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
         }
-      } else if (action.kind === "continue_project") {
-        outcome = action.target === current && current
-          ? { status: "project_continued", projectId: current } : { status: "needs_clarification", route: "project_selection" };
-      } else if (action.kind === "propose_project") {
-        const available = envelope.context.capabilities.some(skill =>
-          skill.id === "create_project" && skill.version === 1 && skill.phase === "preview");
-        const { preview } = available
-          ? await skills.dispatch({ id: "create_project", version: 1, input: { phase: "preview" } }, { envelope, awake }, "preview")
-          : { preview: null };
-        pendingPreview = preview;
-        pendingWrite = preview ? structuredClone(preview) : undefined;
-        return { action, outcome: { status: preview ? "confirmation_required" : available ? "proposed" : "unavailable", route: "project_creation" },
-          preview, proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
-      } else if (action.kind === "discover_capability") {
-        outcome = { status: "proposed", route: action.kind };
-      } else if (action.kind === "request_capability") {
-        const capability = envelope.context.capabilities.find(entry => entry.id === action.target);
-        const names = action.arguments.map(arg => arg.name);
-        if (!capability || capability.availability !== "available") outcome = { status: "unavailable" };
-        else if (names.some(name => !capability.arguments.some(arg => arg.name === name)) ||
-            capability.arguments.some(arg => arg.required && !names.includes(arg.name))) {
-          outcome = { status: "invalid_arguments", route: capability.route };
-        } else {
-          outcome = { status: {
-            conversation: capability.id === "ask_for_help" ? "needs_clarification" : "conversation",
-            confirmation: "confirmation_required", "review-only": "proposed"
-          }[capability.authorization], route: capability.route };
+        if (capabilityOutcome?.suppressUpdates) {
+          const { suppressUpdates, ...outcome } = capabilityOutcome;
+          return { action, outcome, proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
         }
+        if (capabilityOutcome) outcome = capabilityOutcome;
+        if (!capabilityOutcome && action.kind === "discover_capability") {
+          outcome = { status: "proposed", route: action.kind };
+        } else if (!capabilityOutcome && action.kind === "request_capability") {
+          const capability = envelope.context.capabilities.find(entry => entry.id === action.target);
+          const names = action.arguments.map(arg => arg.name);
+          if (!capability || capability.availability !== "available") outcome = { status: "unavailable" };
+          else if (names.some(name => !capability.arguments.some(arg => arg.name === name)) ||
+              capability.arguments.some(arg => arg.required && !names.includes(arg.name))) {
+            outcome = { status: "invalid_arguments", route: capability.route };
+          } else {
+            outcome = { status: {
+              conversation: capability.id === "ask_for_help" ? "needs_clarification" : "conversation",
+              confirmation: "confirmation_required", "review-only": "proposed"
+            }[capability.authorization], route: capability.route };
+          }
+        }
+
       }
 
       const due = envelope.context.refresh.due || (awake.rebuild && awake.rebuild !== "threshold");

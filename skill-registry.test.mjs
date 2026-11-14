@@ -38,3 +38,13 @@ test("versions coexist and a bounded workflow composes skills through the same c
   const invalid = createSkillRegistry([binding("broken", 1, () => ({ text: "wrong shape" }))]);
   await assert.rejects(invalid.dispatch(request("broken", 1, input), { allowed: ["broken"] }, "read"), /Invalid skill result/);
 });
+
+test("catalog metadata can disable trusted versions but cannot register a handler", async () => {
+  const skill = binding("sample", 1, ({ value }) => ({ value }));
+  const registry = createSkillRegistry([skill]);
+  const unknown = { ...skill.descriptor, id: "unknown", phase: undefined };
+  const disabled = { id: "sample", availability: "unavailable" };
+  assert.deepEqual(registry.available([], {}), [skill.descriptor]);
+  assert.deepEqual(registry.available([unknown, disabled], {}), [unknown, disabled]);
+  await assert.rejects(registry.dispatch(request("unknown", 1, { value: 1 }), { allowed: ["unknown"] }, "read"), /unavailable/);
+});
