@@ -30,6 +30,7 @@ export const awakeInstructions = [
   "Use ask_for_help when uncertain. An implied request can propose a capability, but never grants permission.",
   "Use switch_project only when the user asks to switch and cite the current user message. A mention is not a switch.",
   "When context.projectSelection is present, the steward already loaded the requested project. Use its continuity in this reply.",
+  "Use context.lookupProject to answer this turn only. Keep its scope, including fictional scope, separate from the active room and global memory.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
   "For an explicit request to create a project from this conversation, use propose_project with a stable slug target and arguments name and scope (fictional or real).",
@@ -268,7 +269,7 @@ export function validateAwake(awake, envelope) {
   const exact = (value, fields) => value && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).length === fields.length && fields.every(field => Object.hasOwn(value, field));
   const known = new Set([envelope.user.source, ...envelope.context.references]);
-  for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity]) {
+  for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity, envelope.context.lookupProject?.continuity]) {
     if (track) for (const layer of layers) for (const entry of track[layer] ?? []) known.add(entry.source);
   }
   const validSources = (refs, required) => Array.isArray(refs) && refs.length <= 4 && (!required || refs.length > 0) &&
@@ -289,7 +290,7 @@ export function validateAwake(awake, envelope) {
       if (allowed) fields.push("layer");
       if (!exact(entry, fields) || !["global", "project"].includes(entry.scope) ||
           (allowed && !allowed.includes(entry.layer)) ||
-          (entry.scope === "project" && !envelope.context.activeProject &&
+          (entry.scope === "project" && !(envelope.context.activeProject || envelope.context.lookupProject) &&
             !(allowed && action.kind === "propose_project")) ||
           !bounded(entry.text, 400) || !bounded(entry.rationale, 240) || !validSources(entry.sources, true)) {
         throw new Error("Invalid scoped awake update or evidence.");
@@ -338,8 +339,18 @@ export function journalReceipt(result, supportingTurn) {
 }
 
 function requestedProject(text) {
-  return /^\s*(?:aida\s*,\s*)?(?:please\s+)?(?:let['’]s\s+)?(?:return to|go back to|switch to|open project|select project|change project to|resume project)\s+(.+?)\s*[.!?]?\s*$/i
+  return /^\s*(?:aida\s*,\s*)?(?:please\s+)?(?:let['’]s\s+)?(?:enter|resume|return to|go back to|switch to|open project|select project|change project to|resume project)\s+(.+?)\s*[.!?]?\s*$/i
     .exec(text)?.[1].trim().toLowerCase();
+}
+
+function detailRequest(text) {
+  return /^(?:aida\s*,\s*)?(?:please\s+)?(?:what|who|when|where|why|how|which|did|do|does|is|are|was|were|can|could|would|tell me|remind me|show me|recap|summarize|look up)\b/iu.test(text.trim());
+}
+
+function namesProject(text, entry) {
+  const words = value => value.toLowerCase().match(/[\p{L}\p{N}_-]+/gu)?.join(" ") ?? "";
+  const haystack = " " + words(text) + " ";
+  return [entry.id, entry.name].some(name => words(name) && haystack.includes(" " + words(name) + " "));
 }
 
 export function createAwakeSteward(source, { turns = 4, contextChars = 12000, recoveredTurns = [] } = {}) {
@@ -351,6 +362,19 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   let sizeAtRefresh = 0;
   let sourceRevision;
   const working = new Map();
+
+  async function readProject(entry, operation) {
+    try {
+      const loaded = await source.project(entry.id);
+      if (!loaded.reference) throw new Error("The dedicated continuity record is missing.");
+      return loaded;
+    } catch (error) {
+      throw Object.assign(new Error("Cannot load project continuity for " + entry.name + ". " + error.message), {
+        status: error.status,
+        projectRead: { operation, status: "unavailable", projectId: entry.id, reference: null, sectionCounts: null }
+      });
+    }
+  }
 
   function track(key, seed) {
     const changes = working.get(key) ?? [];
@@ -381,43 +405,57 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   return {
     async assemble(recent, user) {
       const requested = requestedProject(user?.text ?? "");
-      if (!base || requested || refreshNext || sourceRevision !== source.revision) {
+      const lookup = !requested && detailRequest(user?.text ?? "");
+      if (!base || requested || lookup || refreshNext || sourceRevision !== source.revision) {
         base = await source.load();
         sourceRevision = source.revision;
         if (activeId && !base.projects.some(entry => entry.id === activeId)) activeId = null;
         project = undefined;
         refreshNext = false;
       }
-      let selected;
-      if (requested) {
-        const matches = base.projects.filter(entry => [entry.id, entry.name.toLowerCase()].some(name =>
-          requested === name || requested === `project ${name}`));
-        if (matches.length > 1) throw new Error(`Which project did you mean? Use its project ID: ${matches.map(entry => entry.id).join(", ")}.`);
-        if (!matches.length) throw new Error("No registered project matches that request. Use its exact name or project ID.");
-        [selected] = matches;
+      const operation = requested ? "enter" : "lookup";
+      const matches = requested ? base.projects.filter(entry => [entry.id, entry.name.toLowerCase()].some(name =>
+        requested === name || requested === "project " + name)) :
+        lookup ? base.projects.filter(entry => namesProject(user.text, entry)) : [];
+      if (matches.length > 1 || (requested && !matches.length)) {
+        const status = matches.length ? "ambiguous" : "unresolved";
+        const message = matches.length ? "Which project did you mean? Use its project ID: " + matches.map(entry => entry.id).join(", ") + "." :
+          "No registered project matches that request. Use its exact name or project ID.";
+        throw Object.assign(new Error(message), { projectRead: { operation, status, projectId: null, reference: null, sectionCounts: null } });
+      }
+      const [selected] = requested ? matches : [];
+      let lookupProject;
+      let lookupRecord;
+      if (lookup && matches.length) {
+        const [match] = matches;
+        lookupRecord = await readProject(match, operation);
+        lookupProject = { ...match, continuity: track("project:" + match.id, lookupRecord.continuity) };
       }
       const entry = selected ?? base.projects.find(item => item.id === activeId);
       let loaded = project;
       if (selected) {
-        try {
-          loaded = await source.project(selected.id);
-          if (!loaded.reference) throw new Error("The dedicated continuity record is missing.");
-        } catch (error) {
-          throw Object.assign(new Error(`Cannot load project continuity for ${selected.name}. ${error.message}`), { status: error.status });
-        }
+        loaded = await readProject(selected, "enter");
         project = activeId === selected.id ? loaded : undefined;
       } else if (entry && !loaded) {
-        project = loaded = await source.project(entry.id);
+        project = loaded = entry.id === lookupProject?.id ? lookupRecord : await source.project(entry.id);
       }
       const global = track("global", base.global);
       const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, loaded.continuity) } : null;
-      const size = JSON.stringify({ global, activeProject, recent }).length;
+      const readEntry = selected ? activeProject : lookupProject;
+      const projectRead = readEntry ? {
+        operation: selected ? "enter" : "lookup", status: selected ? "loaded_for_entry" : "looked_up",
+        projectId: readEntry.id, reference: (selected ? loaded : lookupRecord).reference,
+        sectionCounts: Object.fromEntries(layers.map(layer => [layer, readEntry.continuity[layer].length]))
+      } : null;
+      const size = JSON.stringify({ global, activeProject, lookupProject, recent }).length;
       return {
         global, activeProject, currentProjectId: entry?.id ?? null,
         likelyProjectId: entry?.id ?? base.likelyProjectId ?? null,
         ...(selected ? { projectSelection: { projectId: selected.id, source: user.source } } : {}),
+        ...(lookupProject ? { lookupProject } : {}),
+        ...(projectRead ? { projectRead } : {}),
         projects: base.projects, capabilities: base.capabilities,
-        references: [...base.references, loaded?.reference].filter(Boolean),
+        references: [...new Set([...base.references, loaded?.reference, lookupRecord?.reference].filter(Boolean))],
         refresh: { due: count >= turns || (size >= contextChars && size > sizeAtRefresh), turnsSinceRefresh: count, contextChars: size }
       };
     },
@@ -428,6 +466,10 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       const current = envelope.context.currentProjectId;
       let outcome = { status: "conversation", route: "conversation" };
       if (!allowUpdates) return { action, outcome: { status: "excluded" }, applied: [] };
+      if (envelope.context.lookupProject) {
+        return { action, outcome: { status: "project_looked_up", projectId: envelope.context.lookupProject.id },
+          proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
+      }
       count++;
       if (envelope.context.projectSelection) {
         activeId = current;

@@ -177,6 +177,56 @@ test("fresh Lighthouse return sends verified project continuity and global conte
   }
 });
 
+test("named detail requests read only the selected fictional project without entering it", async () => {
+  const id = "the-clockwork-lighthouse";
+  const name = "The Clockwork Lighthouse";
+  const path = "aida-context-project-" + id + ".json";
+  const entry = { id, name, description: "Fictional fixture.", status: "active", routingSummary: "Lighthouse story.", scope: "fictional" };
+  const detail = { source: "fixture:lighthouse", text: "The clock stopped at midnight." };
+  const docs = { ...files, "aida-context-projects.json": { projects: [entry] }, [path]: { projectId: id, short: [detail] } };
+  const { source, reads } = fixture(docs);
+  const question = "What had we decided about The Clockwork Lighthouse?";
+  let calls = 0;
+  const session = chat(createAwakeSteward(source), envelope => {
+    calls++;
+    assert.equal(envelope.identity.name, "Aida");
+    assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+    assert.equal(envelope.context.currentProjectId, null);
+    if (calls <= 2) {
+      assert.equal(envelope.context.activeProject, null);
+      assert.equal(envelope.context.lookupProject.scope, "fictional");
+      assert.deepEqual(envelope.context.lookupProject.continuity.short, [detail]);
+      assert.ok(envelope.context.references.includes("drive:aida-context-project-" + id));
+      return answer(envelope, { rebuild: "meaningful_event", changes: [
+        { scope: "global", layer: "short", text: detail.text, rationale: "Must remain fictional.", sources: [detail.source] }
+      ] });
+    }
+    assert.equal(envelope.context.lookupProject, undefined);
+    assert.equal(envelope.context.global.short.length, 0);
+    return answer(envelope);
+  });
+  const result = await session.send(question);
+  assert.equal(calls, 1);
+  assert.equal(result.receipt.outcome.status, "project_looked_up");
+  assert.deepEqual(result.receipt.applied, []);
+  assert.deepEqual(result.envelope.context.projectRead, { operation: "lookup", status: "looked_up", projectId: id,
+    reference: "drive:aida-context-project-" + id, sectionCounts: { long: 0, short: 1, recent: 0, facts: 0, insights: 0 } });
+  await session.send("Recap the-clockwork-lighthouse.");
+  const readsAfterLookup = reads.length;
+  await session.send("I saw a poster for The Clockwork Lighthouse.");
+  assert.equal(reads.length, readsAfterLookup);
+
+  const noCall = () => assert.fail("Unresolved lookup must stop before calling the provider");
+  const duplicate = fixture({ ...docs, "aida-context-projects.json": { projects: [entry, { ...entry, id: "other" }] } });
+  await assert.rejects(chat(createAwakeSteward(duplicate.source), noCall).send(question), error =>
+    error.projectRead.status === "ambiguous" && /other/.test(error.message));
+  for (const continuity of [null, { projectId: id, unreadable: true }, { projectId: "wrong" }]) {
+    const broken = fixture({ ...docs, [path]: continuity });
+    await assert.rejects(chat(createAwakeSteward(broken.source), noCall).send(question), error =>
+      error.projectRead.projectId === id && error.projectRead.status === "unavailable");
+  }
+});
+
 test("explicit and implied capability requests are proposals with mechanical checks and no external execution", async () => {
   const session = chat(createAwakeSteward(fixture().source), envelope => {
     const message = envelope.user.text;

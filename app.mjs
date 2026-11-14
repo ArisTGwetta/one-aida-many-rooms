@@ -43,7 +43,11 @@ async function run(label, action, target = status) {
       browserKey = undefined;
     }
     target.textContent = error.message;
-    if (target.id === "chat-status" && !byId("conversation-details").hidden) {
+    if (target.id === "chat-status" && error.projectRead) {
+      byId("conversation-evidence").textContent = JSON.stringify({ projectRead: error.projectRead }, null, 2);
+      byId("conversation-details").hidden = false;
+      byId("conversation-evidence-label").textContent = "Development evidence — project read stopped before provider call";
+    } else if (target.id === "chat-status" && !byId("conversation-details").hidden) {
       byId("conversation-evidence-label").textContent = "Development evidence — last successful turn";
     }
   } finally {
@@ -367,6 +371,10 @@ async function setupChat(folderId) {
           ({ source, recordId, savedAt, destination, proposalId, reviewId, sources })),
         recentMessageCount: result.envelope.memory.recent.length, response: result.response,
         awakeContext: { projectId: result.envelope.context.currentProjectId, references: result.envelope.context.references },
+        projectRead: result.envelope.context.projectRead ? {
+          ...result.envelope.context.projectRead,
+          status: result.receipt.outcome.status === "project_selected" ? "activated" : result.envelope.context.projectRead.status
+        } : null,
         stewardReceipt: result.receipt
       }, null, 2);
       details.hidden = false;
