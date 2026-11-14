@@ -17,7 +17,7 @@ const item = object({ scope, text: string, sources, rationale: string });
 
 export const awakeSchema = object({
   action: object({
-    kind: enumeration(...kinds), target: nullable, arguments: array(object({ name: string, value: string })),
+    kind: enumeration(...kinds.filter(kind => kind !== "propose_project")), target: nullable, arguments: array(object({ name: string, value: string })),
     sources, uncertainty: nullable
   }),
   rebuild: { anyOf: [enumeration(...reasons), { type: "null" }] },
@@ -34,9 +34,6 @@ export const awakeInstructions = [
   "Use context.lookupProject to answer this turn only. Keep its scope, including fictional scope, separate from the active room and global memory.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
-  "For an explicit request to create a project from this conversation, use propose_project with a stable slug target and arguments name and scope (fictional or real).",
-  "Cite the current request and use project-scoped changes to propose concise LONG purpose, SHORT current situation, and RECENT developments, each with exact conversation sources. Cite only excerpts relevant to the named project. Preserve fictional scope and leave unsupported layers empty. The steward will preview the transfer for confirmation.",
-  "Say that project creation is proposed and awaits confirmation. Never claim a project has been created by proposing it.",
   "Propose source-grounded changes only when context meaning changes or refresh is due. LONG is purpose and enduring direction, SHORT is current situation and next steps, RECENT is meaningful events.",
   "Use separate global and active-project scopes. Changes add a current observation to a bounded working layer, not a canonical commit.",
   "Use exact visible source IDs. Return empty arrays and null rebuild when there is no update. Report consequential unresolved contradictions and keep candidate facts separate from working context."
@@ -302,7 +299,7 @@ export function validateAwake(awake, envelope) {
 
 export function journalReceipt(result, supportingTurn) {
   const receipt = result.receipt;
-  if (!receipt || receipt.outcome.status === "excluded" || receipt.action.kind === "propose_project") return undefined;
+  if (!receipt || receipt.outcome.status === "excluded" || (receipt.preview || receipt.action.kind === "propose_project")) return undefined;
   if (!receipt.applied.length && !receipt.proposed.length && !receipt.candidates.length &&
       !receipt.contradictions.length && receipt.action.kind === "just_keep_talking") return undefined;
   const { envelope } = result;
@@ -381,16 +378,25 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       return request ? this.resolveSkill(context, user, request) : context;
     },
 
-    async resolveSkill(context, user, request) {
-      if (!context.capabilities.some(skill => skill.id === request.id && skill.version === request.version && skill.phase === "read")) {
+    async resolveSkill(context, user, request, envelope, allowPreview = true) {
+      const skill = context.capabilities.find(item => item.id === request.id && item.version === request.version);
+      if (context.retrievalComplete || !["read", "preview"].includes(skill?.phase) ||
+          (skill.phase === "preview" && (!allowPreview || !envelope))) {
         throw new Error("Skill is not advertised for this turn.");
       }
-      const result = await skills.dispatch(request, { user, context }, "read");
+      const result = await skills.dispatch(request, { user, context, envelope }, skill.phase);
+      if (skill.phase === "preview") {
+        return { ...context, retrievalComplete: true, skillPreview: { request: structuredClone(request), proposal: result.preview } };
+      }
       return { ...skills.integrate(request, result, context, { track }), retrievalComplete: true };
     },
 
+    cancelPreview(preview) {
+      if (preview === pendingPreview) pendingPreview = pendingWrite = undefined;
+    },
+
     async confirm(preview) {
-      if (!pendingPreview || preview !== pendingPreview) throw new Error("Confirm the current project preview.");
+      if (!pendingPreview || preview !== pendingPreview) throw new Error("Confirm the current capability preview.");
       const result = await skills.dispatch(pendingWrite,
         { confirmed: true }, "preview");
       pendingPreview = pendingWrite = undefined;
@@ -403,6 +409,16 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       const current = envelope.context.currentProjectId;
       let outcome = { status: "conversation", route: "conversation" };
       if (!allowUpdates) return { action, outcome: { status: "excluded" }, applied: [] };
+      if (envelope.context.skillPreview) {
+        const { request, proposal } = envelope.context.skillPreview;
+        const preview = proposal ? { id: request.id, version: request.version,
+          arguments: structuredClone(request.input), proposal } : null;
+        pendingPreview = preview;
+        pendingWrite = preview ? { id: request.id, version: request.version, input: { phase: "confirm",
+          arguments: structuredClone(request.input), preview: structuredClone(proposal) } } : undefined;
+        return { action, outcome: { status: preview ? "confirmation_required" : "proposed", route: request.id },
+          preview, proposed: [], candidates: [], contradictions: [], applied: [] };
+      }
       count++;
       if (envelope.context.lookupProject) {
         return { action, outcome: { status: "project_looked_up", projectId: envelope.context.lookupProject.id },
@@ -416,16 +432,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
         outcome = { status: "needs_clarification", route: "clarification" };
       } else {
         const skillContext = { envelope, awake, context: envelope.context };
-        const request = skills.plan(skillContext, "preview");
         const capabilityOutcome = skills.action(skillContext);
-        if (request) {
-          const { preview } = await skills.dispatch(request, skillContext, "preview");
-          pendingPreview = preview;
-          pendingWrite = preview ? { id: request.id, version: request.version,
-            input: { phase: "confirm", preview: structuredClone(preview) } } : undefined;
-          return { action, outcome: { status: preview ? "confirmation_required" : "proposed", route: request.id },
-            preview, proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
-        }
         if (capabilityOutcome?.suppressUpdates) {
           const { suppressUpdates, ...outcome } = capabilityOutcome;
           return { action, outcome, proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };

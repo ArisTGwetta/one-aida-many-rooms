@@ -43,24 +43,19 @@ export function attachProjectResult(context, { operation, project, reference }) 
 const stableId = value => typeof value === "string" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
 const bounded = (value, max) => typeof value === "string" && Boolean(value.trim()) && value.length <= max;
 
-export function projectPreview(envelope, awake) {
-  const { action, changes } = awake;
-  if (action.kind !== "propose_project" || action.uncertainty !== null ||
-      !action.sources.includes(envelope.user.source) || !stableId(action.target)) return null;
-  const args = Object.fromEntries(action.arguments.map(arg => [arg.name, arg.value]));
-  if (Object.keys(args).length !== 2 || !bounded(args.name, 120) || !["fictional", "real"].includes(args.scope)) return null;
+function projectPreview(envelope, { projectId, name, scope, evidence: excerpt, entries: selected }) {
+  if (!envelope.user.text.includes(excerpt)) throw new Error("Invalid project request evidence.");
   const visible = new Map([...envelope.memory.recent, envelope.user].map(message => [message.source, message]));
-  const selected = changes.filter(change => change.scope === "project");
-  if (!selected.length || selected.some(change => change.sources.some(ref => !visible.has(ref)))) return null;
+  if (!selected.length || selected.some(change => change.sources.some(ref => !visible.has(ref)))) throw new Error("Invalid project continuity source.");
   const seed = { long: [], short: [], recent: [], facts: [], insights: [] };
   const evidence = new Map();
   for (const change of selected) {
-    if (seed[change.layer].length === 4) return null;
+    if (seed[change.layer].length === 4) throw new Error("Too many entries for a project continuity section.");
     for (const ref of change.sources) evidence.set(ref, visible.get(ref));
     seed[change.layer].push({ source: change.sources[0], text: change.text, sources: change.sources });
   }
-  const entry = { id: action.target, name: args.name.trim(), description: args.name.trim(), status: "active",
-    routingSummary: args.name.trim(), scope: args.scope };
+  const entry = { id: projectId, name: name.trim(), description: name.trim(), status: "active",
+    routingSummary: name.trim(), scope };
   evidence.set(envelope.user.source, envelope.user);
   return { entry, continuity: seed, evidence: [...evidence.values()], authorizationSource: envelope.user.source };
 }
@@ -111,18 +106,31 @@ export function projectSkills(source, additionalBindings = []) {
     },
     {
       descriptor: skillDescriptor("create_project", version, "preview",
-        "Propose project creation with grounded changes. A preview requires separate confirmation.", [
-          { name: "name", description: "Project name.", required: true, type: "string" },
-          { name: "scope", description: "fictional or real.", required: true, type: "string" }
+        "For an explicit request to preserve a named project, propose concise LONG, SHORT and RECENT with exact conversation sources. Preserve fictional scope. Confirmation is separate.", [
+          { name: "projectId", description: "Stable project slug.", required: true },
+          { name: "name", description: "Project name.", required: true },
+          { name: "scope", description: "fictional or real.", required: true },
+          { name: "evidence", description: "Verbatim excerpt of the current request.", required: true },
+          { name: "entries", description: "Grounded continuity entries.", required: true, schema: {
+            type: "array", items: { type: "object", additionalProperties: false, required: ["layer", "text", "sources"],
+              properties: { layer: { type: "string", enum: ["long", "short", "recent"] },
+                text: { type: "string" }, sources: { type: "array", items: { type: "string" } } } }
+          } }
         ]),
-      plan: ({ awake }) => awake?.action.kind === "propose_project" ? { phase: "preview" } : null,
       action: ({ awake }) => awake.action.kind === "propose_project"
         ? { status: "unavailable", route: "project_creation", suppressUpdates: true } : null,
-      validate: input => input?.phase === "preview" || input?.phase === "confirm",
-      authorize: (input, context) => input.phase === "preview" ? Boolean(context.envelope && context.awake) :
-        Boolean(context.confirmed && input.preview),
-      run: (input, context) => input.phase === "preview" ?
-        { preview: projectPreview(context.envelope, context.awake) } : source.createProject(input.preview),
+      validate: input => input?.phase === "confirm" ? Boolean(input.preview && input.arguments) :
+        input && Object.keys(input).length === 5 && stableId(input.projectId) && bounded(input.name, 120) &&
+        ["fictional", "real"].includes(input.scope) && bounded(input.evidence, 4000) &&
+        Array.isArray(input.entries) && input.entries.length > 0 && input.entries.length <= 12 &&
+        input.entries.every(entry => entry && Object.keys(entry).length === 3 &&
+          ["long", "short", "recent"].includes(entry.layer) && bounded(entry.text, 400) &&
+          Array.isArray(entry.sources) && entry.sources.length > 0 && entry.sources.length <= 4 &&
+          new Set(entry.sources).size === entry.sources.length),
+      authorize: (input, context) => input.phase === "confirm" ? context.confirmed === true :
+        Boolean(context.envelope && context.user.text.includes(input.evidence)),
+      run: (input, context) => input.phase === "confirm" ?
+        source.createProject(input.preview) : { preview: projectPreview(context.envelope, input) },
       validateResult: result => result && (result.preview === null || Boolean(result.preview?.entry?.id) ||
         (typeof result.projectId === "string" && typeof result.continuityReference === "string" &&
           typeof result.catalogReference === "string"))

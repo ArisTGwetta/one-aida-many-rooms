@@ -69,6 +69,7 @@ async function setupChat(folderId) {
   let projectPreview;
   let steward;
   function clearProjectPreview() {
+    steward?.cancelPreview(projectPreview);
     projectPreview = undefined;
     projectData.textContent = projectStatus.textContent = "";
     projectPanel.hidden = true;
@@ -76,11 +77,11 @@ async function setupChat(folderId) {
   byId("project-cancel").addEventListener("click", clearProjectPreview);
   byId("project-confirm").addEventListener("click", () => {
     if (!projectPreview || !token) return;
-    run("Saving and verifying project…", async () => {
+    run("Executing confirmed capability…", async () => {
       const saved = await steward.confirm(projectPreview);
       projectPreview = undefined;
       projectData.textContent = JSON.stringify(saved, null, 2);
-      return "Project created and verified in Drive.";
+      return "Capability completed and verified.";
     }, projectStatus);
   });
   const contextStatus = byId("context-status");
@@ -377,7 +378,7 @@ async function setupChat(folderId) {
       if (result.receipt.preview) {
         projectPreview = result.receipt.preview;
         projectData.textContent = JSON.stringify(projectPreview, null, 2);
-        projectStatus.textContent = "Review the selected excerpts and continuity before saving.";
+        projectStatus.textContent = "Review the proposed action and its evidence before confirming.";
         projectPanel.hidden = false;
       }
       const turn = { ...result.turn, conversationId };
@@ -426,7 +427,7 @@ async function setupChat(folderId) {
       return {
         project_selected: "Project continuity loaded and room selected.",
         project_looked_up: "Project continuity retrieved.",
-        confirmation_required: result.receipt.preview ? "Project preview is ready for confirmation." :
+        confirmation_required: result.receipt.preview ? "Capability preview is ready for confirmation." :
           "Capability request recorded. It requires your confirmation.",
         proposed: "Request proposed for review.",
         unavailable: "The requested capability is unavailable.",

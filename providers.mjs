@@ -138,21 +138,21 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
     if (new TextEncoder().encode(content).byteLength > maxEnvelopeBytes) throw new ProviderError("The conversation envelope is too large.");
     const finalSchema = object({ ...schema.properties, awake: awakeSchema });
     const skills = envelope.context?.retrievalComplete ? [] :
-      envelope.context?.capabilities.filter(skill => skill.phase === "read") ?? [];
+      envelope.context?.capabilities.filter(skill => ["read", "preview"].includes(skill.phase)) ?? [];
     const format = envelope.context
       ? { name: "aida_conversation_v02_awake", instructions: `${instructions} ${awakeInstructions}`,
         schema: finalSchema, tokens: 2000 }
       : { name: "aida_conversation_v02", instructions, schema, tokens: maxOutputTokens };
     if (envelope.context?.retrievalComplete) {
-      format.instructions += " Give a final reply using the verified result as scoped evidence.";
+      format.instructions += " Give a final reply using the verified result as scoped evidence. If a preview is present, say it awaits explicit confirmation.";
     }
     if (skills.length) {
       format.name = "aida_awake_with_skill";
-      format.instructions += " Return result as a final answer or return result.skillRequest to invoke one advertised read skill. Use its exact ID and version and follow its argument requirements. The next call must answer.";
+      format.instructions += " Return result as a final answer or return result.skillRequest to invoke one advertised capability. Use its exact ID and version and follow its argument requirements. A preview does not execute a capability. The next call must answer.";
       format.schema = object({ result: { anyOf: [finalSchema, ...skills.map(skill => object({
         skillRequest: object({
           id: choices(skill.id), version: { type: "integer", enum: [skill.version] },
-          input: object(Object.fromEntries(skill.arguments.map(argument => [argument.name, argument.required ? string : { type: ["string", "null"] }])))
+          input: object(Object.fromEntries(skill.arguments.map(argument => [argument.name, argument.schema ?? (argument.required ? string : { type: ["string", "null"] })])))
         })
       }))] } });
     }

@@ -48,7 +48,7 @@ function validateConversationResponse(raw, envelope) {
   if (hasFields(output, ["skillRequest"])) {
     const request = output.skillRequest;
     if (!hasFields(request, ["id", "version", "input"]) || envelope.context?.retrievalComplete ||
-        !envelope.context?.capabilities.some(skill => skill.phase === "read" && skill.id === request.id && skill.version === request.version)) {
+        !envelope.context?.capabilities.some(skill => ["read", "preview"].includes(skill.phase) && skill.id === request.id && skill.version === request.version)) {
       throw new Error("Invalid skill request.");
     }
     return output;
@@ -149,7 +149,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         }
         let response = await requestReply();
         if (response.skillRequest) {
-          context = await steward.resolveSkill(context, user, response.skillRequest);
+          context = await steward.resolveSkill(context, user, response.skillRequest, envelope, keepInContext);
           envelope.context = context;
           try {
             response = await requestReply();

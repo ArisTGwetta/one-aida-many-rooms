@@ -174,7 +174,10 @@ test("OpenAI and Ollama opt into the same v0.2 awake response schema", async () 
       const body = JSON.parse(options.body);
       const openai = url.includes("openai.com");
       const schema = openai ? body.text.format.schema : body.format;
-      assert.ok(schema.required.includes("awake"));
+      assert.ok(schema.properties.result.anyOf[0].required.includes("awake"));
+      assert.ok(!schema.properties.result.anyOf[0].properties.awake.properties.action.properties.kind.enum.includes("propose_project"));
+      assert.ok(schema.properties.result.anyOf.some(variant =>
+        variant.properties.skillRequest?.properties.id.enum.includes("create_project")));
       assert.equal(JSON.parse(openai ? body.input : body.messages[1].content).version, "0.2");
       const raw = JSON.stringify(answer(envelope));
       return Response.json(openai ? { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: raw }] }] }
@@ -278,24 +281,22 @@ test("owned context initialization survives interruption and flags missing, malf
   let selectStory = false;
   const steward = createAwakeSteward(open());
   const session = chat(steward, envelope => {
-    if (!selectStory) return answer(envelope);
+    if (!selectStory || envelope.context.retrievalComplete) return answer(envelope);
     const story = envelope.memory.recent.find(item => item.text === "The scouts guard the gate until dawn.");
-    return answer(envelope, {
-      action: requested(envelope, "propose_project", "fictional-gate", {
-        arguments: [{ name: "name", value: "Fictional Gate" }, { name: "scope", value: "fictional" }]
-      }),
-      rebuild: "project_change",
-      changes: [
-        { scope: "project", layer: "short", text: "The scouts guard the gate until dawn.", sources: [story.source], rationale: "Current situation." },
-        { scope: "global", layer: "short", text: "Unrelated global change.", sources: [envelope.user.source], rationale: "Must stay out." }
-      ]
-    });
+    return { skillRequest: { id: "create_project", version: 1, input: {
+      projectId: "fictional-gate", name: "Fictional Gate", scope: "fictional", evidence: envelope.user.text,
+      entries: [{ layer: "short", text: story.text, sources: [story.source] }]
+    } } };
   });
   await session.send("What is seven times eight?");
   await session.send("The scouts guard the gate until dawn.");
   selectStory = true;
   const proposed = await session.send("I changed my mind. Create Fictional Gate and preserve the story.");
-  const { preview } = proposed.receipt;
+  const { preview: pending } = proposed.receipt;
+  assert.equal(pending.id, "create_project");
+  assert.equal(pending.version, 1);
+  assert.equal(pending.arguments.projectId, "fictional-gate");
+  const preview = pending.proposal;
   assert.equal(proposed.receipt.outcome.status, "confirmation_required");
   assert.deepEqual(proposed.receipt.applied, []);
   assert.equal(writes.length, 4);
@@ -307,13 +308,13 @@ test("owned context initialization survives interruption and flags missing, malf
   assert.deepEqual(preview.continuity.recent, []);
   assert.equal(journalReceipt(proposed)?.preview, undefined);
 
-  await assert.rejects(steward.confirm(structuredClone(preview)), /current project preview/);
+  await assert.rejects(steward.confirm(structuredClone(pending)), /current capability preview/);
   failCatalogUpdate = true;
-  await assert.rejects(steward.confirm(preview), /503/);
+  await assert.rejects(steward.confirm(pending), /503/);
   assert.equal(writes.length, 5);
   assert.ok(!catalog.record.projects.some(item => item.id === preview.entry.id));
-  const saved = await steward.confirm(preview);
-  await assert.rejects(steward.confirm(preview), /current project preview/);
+  const saved = await steward.confirm(pending);
+  await assert.rejects(steward.confirm(pending), /current capability preview/);
   assert.equal(saved.projectId, preview.entry.id);
   assert.deepEqual(await open().createProject(preview), saved);
   assert.equal(writes.length, 5);
@@ -556,4 +557,49 @@ test("an independently registered third capability can preload or dispatch witho
   assert.equal(calls, 3);
   assert.equal(executions, 2);
   assert.ok(!reads.includes("aida-context-project-atlas.json"));
+});
+
+test("a registered confirmation skill previews and commits without a capability-specific route", async () => {
+  const { source } = fixture();
+  let committed;
+  let calls = 0;
+  const descriptor = skillDescriptor("fixture_confirm", 2, "preview", "Prepare a test action.", [
+    { name: "label", required: true }
+  ]);
+  const skills = projectSkills(source, [{
+    descriptor,
+    validate: input => input.phase === "confirm"
+      ? input.arguments.label === input.preview.label : input.label === "test action",
+    authorize: (input, context) => input.phase !== "confirm" || context.confirmed === true,
+    run(input) {
+      if (input.phase !== "confirm") return { preview: { label: input.label } };
+      committed = input;
+      return { done: true };
+    },
+    validateResult: result => Boolean(result.preview || result.done)
+  }]);
+  const steward = createAwakeSteward(source, { skills });
+  const session = chat(steward, envelope => {
+    calls++;
+    if (!envelope.context.retrievalComplete) {
+      return { skillRequest: { id: descriptor.id, version: 2, input: { label: "test action" } } };
+    }
+    assert.equal(envelope.context.skillPreview.proposal.label, "test action");
+    assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+    return answer(envelope);
+  });
+  await assert.rejects(session.send("Preview the test action", { keepInContext: false }), /not advertised/);
+  assert.equal(calls, 1);
+  const result = await session.send("Preview the test action");
+  assert.equal(calls, 3);
+  assert.equal(committed, undefined);
+  assert.equal(journalReceipt(result), undefined);
+  const preview = result.receipt.preview;
+  assert.deepEqual(preview, { id: descriptor.id, version: 2,
+    arguments: { label: "test action" }, proposal: { label: "test action" } });
+  await assert.rejects(steward.confirm({ ...preview }), /current capability preview/);
+  preview.proposal.label = "tampered";
+  assert.deepEqual(await steward.confirm(preview), { done: true });
+  assert.deepEqual(committed.preview, { label: "test action" });
+  await assert.rejects(steward.confirm(preview), /current capability preview/);
 });
