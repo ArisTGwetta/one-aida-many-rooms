@@ -33,7 +33,8 @@ export function parseConversationResponse(raw, envelope) {
     return validateConversationResponse(raw, envelope);
   } catch (error) {
     const reason = error.constructor === Error ? error.message : "The response could not be validated.";
-    throw new ConversationValidationError(`Conversation response validation failed. ${reason}`);
+    throw Object.assign(new ConversationValidationError(`Conversation response validation failed. ${reason}`),
+      { diagnostic: error.diagnostic });
   }
 }
 
@@ -147,14 +148,20 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           }
           return parseConversationResponse(raw, envelope);
         }
-        let response = await requestReply();
+        let response;
+        try {
+          response = await requestReply();
+        } catch (error) {
+          throw Object.assign(error, { projectRead: context?.projectRead, callPhase: "initial" });
+        }
         if (response.skillRequest) {
           context = await steward.resolveSkill(context, user, response.skillRequest, envelope, keepInContext);
           envelope.context = context;
           try {
             response = await requestReply();
           } catch (error) {
-            throw Object.assign(error, { skillFailure: { id: response.skillRequest.id, version: response.skillRequest.version } });
+            throw Object.assign(error, { callPhase: "after_skill", projectRead: context.projectRead,
+              skillFailure: { id: response.skillRequest.id, version: response.skillRequest.version } });
           }
         }
         const receipt = steward ? await steward.apply(envelope, response.awake, keepInContext) : undefined;

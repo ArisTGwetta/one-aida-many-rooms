@@ -175,7 +175,8 @@ test("OpenAI and Ollama opt into the same v0.2 awake response schema", async () 
       const openai = url.includes("openai.com");
       const schema = openai ? body.text.format.schema : body.format;
       assert.ok(schema.properties.result.anyOf[0].required.includes("awake"));
-      assert.ok(!schema.properties.result.anyOf[0].properties.awake.properties.action.properties.kind.enum.includes("propose_project"));
+      assert.ok(!schema.properties.result.anyOf[0].properties.awake.properties.action.anyOf.some(variant =>
+        variant.properties.kind.enum.includes("propose_project")));
       assert.ok(schema.properties.result.anyOf.some(variant =>
         variant.properties.skillRequest?.properties.id.enum.includes("create_project")));
       assert.equal(JSON.parse(openai ? body.input : body.messages[1].content).version, "0.2");
@@ -602,4 +603,50 @@ test("a registered confirmation skill previews and commits without a capability-
   assert.deepEqual(await steward.confirm(preview), { done: true });
   assert.deepEqual(committed.preview, { label: "test action" });
   await assert.rejects(steward.confirm(preview), /current capability preview/);
+});
+
+test("awake source contract distinguishes invalid replies before and after project retrieval", async () => {
+  const command = "Switch to Atlas";
+  const wrapped = "Hello!\nTell me about Atlas.";
+  for (const [mode, input] of [["initial", wrapped], ["preloaded", command], ["after_skill", wrapped], ["valid", command]]) {
+    const { source, reads } = fixture();
+    let calls = 0;
+    const invoke = createProviders({ apiKey: "fixture-key", async fetchRequest(_url, options) {
+      calls++;
+      const body = JSON.parse(options.body);
+      const envelope = JSON.parse(body.input);
+      const schema = body.text.format.schema;
+      const final = schema.properties.result?.anyOf[0] ?? schema;
+      const variants = final.properties.awake.properties.action.anyOf;
+      assert.equal(variants.find(item => item.properties.kind.enum.includes("continue_project")).properties.sources.minItems, 1);
+      assert.equal(variants.find(item => item.properties.kind.enum.includes("just_keep_talking")).properties.sources.minItems, 0);
+      const action = requested(envelope, "continue_project", "atlas", {
+        sources: mode === "valid" ? [envelope.user.source] : []
+      });
+      const reply = mode === "after_skill" && calls === 1
+        ? { skillRequest: { id: "find_project", version: 1, input: { projectId: "atlas", operation: "lookup", evidence: "Atlas" } } }
+        : answer(envelope, { action });
+      return Response.json({ status: "completed", output: [{ type: "message", content: [
+        { type: "output_text", text: JSON.stringify(schema.properties.result ? { result: reply } : reply) }
+      ] }] });
+    } });
+    const session = createConversationSession({
+      steward: createAwakeSteward(source), memoryStore: { recall: async () => null },
+      provider: async envelope => (await invoke({ provider: "openai", model: openAIModel, envelope })).raw
+    });
+    if (mode === "valid") {
+      assert.equal((await session.send(input)).receipt.outcome.status, "project_selected");
+    } else {
+      await assert.rejects(session.send(input), error => {
+        assert.equal(error.diagnostic, "awake_action_sources");
+        assert.equal(error.callPhase, mode === "after_skill" ? "after_skill" : "initial");
+        assert.equal(error.projectRead?.status, { preloaded: "loaded_for_entry", after_skill: "looked_up" }[mode]);
+        assert.equal(error.skillFailure?.id, mode === "after_skill" ? "find_project" : undefined);
+        return true;
+      });
+      assert.equal(session.recentTurnCount, 0);
+    }
+    assert.equal(calls, mode === "after_skill" ? 2 : 1);
+    assert.equal(reads.filter(path => path === "aida-context-project-atlas.json").length, mode === "initial" ? 0 : 1);
+  }
 });

@@ -82,7 +82,7 @@ export async function handleRequest(request, response) {
     send(response, 200, await provider(input));
   } catch (error) {
     if (error instanceof ConversationValidationError) {
-      return send(response, 502, { error: error.message, code: "conversation_validation", usage: error.usage });
+      return send(response, 502, { error: error.message, code: "conversation_validation", diagnostic: error.diagnostic, usage: error.usage });
     }
     send(response, 502, { error: error instanceof ProviderError
       ? error.message : "The provider reply did not match the requested contract.", usage: error.usage });

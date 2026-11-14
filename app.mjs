@@ -44,7 +44,8 @@ async function run(label, action, target = status) {
     }
     target.textContent = error.message;
     if (target.id === "chat-status" && (error.projectRead || error.providerCalls?.length)) {
-      byId("conversation-evidence").textContent = JSON.stringify({ projectRead: error.projectRead, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
+      byId("conversation-evidence").textContent = JSON.stringify({ callPhase: error.callPhase ?? null, projectRead: error.projectRead ?? null,
+        diagnostic: error.diagnostic ?? null, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
       byId("conversation-details").hidden = false;
       byId("conversation-evidence-label").textContent = "Development evidence — turn failed";
     } else if (target.id === "chat-status" && !byId("conversation-details").hidden) {
@@ -209,8 +210,10 @@ async function setupChat(folderId) {
       });
       const result = await response.json();
       if (!response.ok) {
-        if (result.code === "conversation_validation") throw new ConversationValidationError(result.error);
-        throw new ConversationTransportError(result.error ?? "The local server rejected the request.");
+        const ErrorType = result.code === "conversation_validation" ? ConversationValidationError : ConversationTransportError;
+        throw Object.assign(new ErrorType(result.error ?? "The local server rejected the request."), {
+          diagnostic: result.diagnostic, usage: result.usage
+        });
       }
       return result;
     }
@@ -304,9 +307,21 @@ async function setupChat(folderId) {
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope) {
-        const result = await invokeProvider({ ...selection, envelope });
-        evidence = { provider: result.provider, model: result.model, usage: result.usage };
-        return result.raw;
+        const call = { purpose: providerCalls.length ? "answer_with_skill_result" :
+          envelope.context.retrievalComplete ? "answer_with_preloaded_context" : "answer_or_request_skill",
+          provider: selection.provider, model: selection.model, usage: null };
+        providerCalls.push(call);
+        try {
+          const result = await invokeProvider({ ...selection, envelope });
+          Object.assign(call, { model: result.model, usage: result.usage, status: "completed" });
+          return result.raw;
+        } catch (error) {
+          Object.assign(call, { usage: error.usage ?? null, status: "failed" });
+          throw error;
+        } finally {
+          sessionUsd += call.usage?.estimatedUsd ?? 0;
+          showBudget();
+        }
       }
     });
     showJournalContext();

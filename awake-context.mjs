@@ -15,11 +15,16 @@ const scope = enumeration("global", "project");
 const sources = array(string);
 const item = object({ scope, text: string, sources, rationale: string });
 
+const optionalSources = ["just_keep_talking", "ask_for_help"];
+const citedKinds = kinds.filter(kind => ![...optionalSources, "propose_project"].includes(kind));
+const actionSchema = (choices, minItems) => object({
+  kind: enumeration(...choices), target: nullable,
+  arguments: { ...array(object({ name: string, value: string })), maxItems: 8 },
+  sources: { ...sources, minItems, maxItems: 4 }, uncertainty: nullable
+});
+
 export const awakeSchema = object({
-  action: object({
-    kind: enumeration(...kinds.filter(kind => kind !== "propose_project")), target: nullable, arguments: array(object({ name: string, value: string })),
-    sources, uncertainty: nullable
-  }),
+  action: { anyOf: [actionSchema(optionalSources, 0), actionSchema(citedKinds, 1)] },
   rebuild: { anyOf: [enumeration(...reasons), { type: "null" }] },
   changes: array(object({ ...item.properties, layer: enumeration("long", "short", "recent") })),
   candidates: array(object({ ...item.properties, layer: enumeration("facts", "insights") })),
@@ -31,7 +36,9 @@ export const awakeInstructions = [
   "Use ask_for_help when uncertain. An implied request can propose a capability, but never grants permission.",
   "Use switch_project only when the user asks to switch and cite the current user message. A mention is not a switch.",
   "When context.projectSelection is present, the steward already loaded the requested project. Use its continuity in this reply.",
-  "Use context.lookupProject to answer this turn only. Keep its scope, including fictional scope, separate from the active room and global memory.",
+  "Use context.lookupProject to answer this turn only. After a completed lookup, use just_keep_talking unless you genuinely need clarification. Keep retrieved material separate from global memory and the active room.",
+  "Use continue_project only for an explicitly intended continuation of context.currentProjectId. Set target to that stable ID and cite the current user message.",
+  "Every action except just_keep_talking and ask_for_help requires one to four distinct supplied source IDs. Those two may use an empty sources array. Use null for absent target or uncertainty. Use at most eight uniquely named arguments, with stable slug names and nonblank values of at most 240 characters. Non-null target and uncertainty have limits of 120 and 240 characters.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
   "Propose source-grounded changes only when context meaning changes or refresh is due. LONG is purpose and enduring direction, SHORT is current situation and next steps, RECENT is meaningful events.",
@@ -273,17 +280,22 @@ export function validateAwake(awake, envelope) {
   const validSources = (refs, required) => Array.isArray(refs) && refs.length <= 4 && (!required || refs.length > 0) &&
     new Set(refs).size === refs.length && refs.every(ref => known.has(ref));
   const action = awake?.action;
-  if (!exact(awake, ["action", "rebuild", "changes", "candidates", "contradictions"]) ||
-      !exact(action, ["kind", "target", "arguments", "sources", "uncertainty"]) || !kinds.includes(action.kind) ||
-      (action.target !== null && !bounded(action.target, 120)) ||
-      (action.uncertainty !== null && !bounded(action.uncertainty, 240)) ||
-      !validSources(action.sources, !["just_keep_talking", "ask_for_help"].includes(action.kind)) ||
-      !Array.isArray(action.arguments) || action.arguments.length > 8 ||
+  const reject = (diagnostic, message = "Invalid awake action or refresh request.") => {
+    throw Object.assign(new Error(message), { diagnostic });
+  };
+  if (!exact(awake, ["action", "rebuild", "changes", "candidates", "contradictions"])) reject("awake_shape");
+  if (!exact(action, ["kind", "target", "arguments", "sources", "uncertainty"])) reject("awake_action_shape");
+  if (!kinds.includes(action.kind)) reject("awake_action_kind");
+  if (action.target !== null && !bounded(action.target, 120)) reject("awake_action_target");
+  if (action.uncertainty !== null && !bounded(action.uncertainty, 240)) reject("awake_action_uncertainty");
+  if (!validSources(action.sources, !optionalSources.includes(action.kind))) reject("awake_action_sources");
+  if (!Array.isArray(action.arguments) || action.arguments.length > 8 ||
       action.arguments.some(arg => !exact(arg, ["name", "value"]) || !stableId(arg.name) || !bounded(arg.value, 240)) ||
-      new Set(action.arguments.map(arg => arg.name)).size !== action.arguments.length ||
-      (awake.rebuild !== null && !reasons.includes(awake.rebuild))) throw new Error("Invalid awake action or refresh request.");
+      new Set(action.arguments.map(arg => arg.name)).size !== action.arguments.length) reject("awake_action_arguments");
+  if (awake.rebuild !== null && !reasons.includes(awake.rebuild)) reject("awake_rebuild");
   for (const [group, allowed] of [["changes", ["long", "short", "recent"]], ["candidates", ["facts", "insights"]], ["contradictions", null]]) {
-    for (const entry of list(awake[group], 6, group)) {
+    if (!Array.isArray(awake[group]) || awake[group].length > 6) reject("awake_collection", "Invalid awake collection.");
+    for (const entry of awake[group]) {
       const fields = ["scope", "text", "sources", "rationale"];
       if (allowed) fields.push("layer");
       if (!exact(entry, fields) || !["global", "project"].includes(entry.scope) ||
@@ -291,7 +303,7 @@ export function validateAwake(awake, envelope) {
           (entry.scope === "project" && !(envelope.context.activeProject || envelope.context.lookupProject) &&
             !(allowed && action.kind === "propose_project")) ||
           !bounded(entry.text, 400) || !bounded(entry.rationale, 240) || !validSources(entry.sources, true)) {
-        throw new Error("Invalid scoped awake update or evidence.");
+        reject("awake_scoped_evidence", "Invalid scoped awake update or evidence.");
       }
     }
   }
