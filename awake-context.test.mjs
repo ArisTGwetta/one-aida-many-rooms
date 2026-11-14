@@ -37,6 +37,7 @@ function fixture(docs = files) {
       }
       const id = parsed.pathname.split("/").at(-1);
       const doc = docs[id + ".json"];
+      if (doc?.unreadable) return new Response(null, { status: 403 });
       const seed = doc.projects || doc.capabilities ? {} : { long: [], short: [], recent: [], facts: [], insights: [] };
       return Response.json({ schema_version: 1, ...seed, ...doc });
     })
@@ -66,7 +67,7 @@ const requested = (envelope, kind, target, options = {}) =>
 test("ordinary conversation and help tolerate missing Drive catalogs", async () => {
   const { source } = fixture({});
   const session = chat(createAwakeSteward(source), envelope => {
-    assert.deepEqual(envelope.context.capabilities.map(item => item.id), ["just_keep_talking", "ask_for_help"]);
+    assert.deepEqual(envelope.context.capabilities.map(item => item.id), ["just_keep_talking", "ask_for_help", "create_project"]);
     assert.deepEqual(envelope.context.projects, []);
     assert.equal(envelope.memory.facts.length, 2);
     return answer(envelope, envelope.user.text === "Help" ? {
@@ -273,7 +274,8 @@ test("owned context initialization survives interruption and flags missing, malf
   global.record.short = [];
 
   let selectStory = false;
-  const session = chat(createAwakeSteward(open()), envelope => {
+  const steward = createAwakeSteward(open());
+  const session = chat(steward, envelope => {
     if (!selectStory) return answer(envelope);
     const story = envelope.memory.recent.find(item => item.text === "The scouts guard the gate until dawn.");
     return answer(envelope, {
@@ -303,11 +305,13 @@ test("owned context initialization survives interruption and flags missing, malf
   assert.deepEqual(preview.continuity.recent, []);
   assert.equal(journalReceipt(proposed)?.preview, undefined);
 
+  await assert.rejects(steward.confirm(structuredClone(preview)), /current project preview/);
   failCatalogUpdate = true;
-  await assert.rejects(open().createProject(preview), /503/);
+  await assert.rejects(steward.confirm(preview), /503/);
   assert.equal(writes.length, 5);
   assert.ok(!catalog.record.projects.some(item => item.id === preview.entry.id));
-  const saved = await open().createProject(preview);
+  const saved = await steward.confirm(preview);
+  await assert.rejects(steward.confirm(preview), /current project preview/);
   assert.equal(saved.projectId, preview.entry.id);
   assert.deepEqual(await open().createProject(preview), saved);
   assert.equal(writes.length, 5);
@@ -318,4 +322,202 @@ test("owned context initialization survives interruption and flags missing, malf
   await assert.rejects(open().createProject({ ...preview, continuity: {
     ...preview.continuity, short: [{ ...preview.continuity.short[0], text: "A dragon appeared." }]
   } }), /differs from the preview/);
+});
+
+test("multiline Lighthouse request can read once before the final response", async () => {
+  const id = "clockwork-lighthouse";
+  const name = "The Clockwork Lighthouse";
+  const path = "aida-context-project-" + id + ".json";
+  const entry = { id, name, description: "Fictional lighthouse.", status: "active", routingSummary: "Lighthouse story.", scope: "fictional" };
+  const short = { source: "fiction:clock", text: "The clock stopped at midnight." };
+  const docs = { ...files, "aida-context-projects.json": { projects: [entry] }, [path]: { projectId: id, short: [short] } };
+  const command = "Aida, let's return to The Clockwork Lighthouse.";
+  const multiline = "Hello, Aida!\n" + command + "\nWhat do you remember about where we left off?";
+  const question = "Hello, Aida!\nWhat had we decided about The Clockwork Lighthouse?";
+  function run({ operation = "enter", message = multiline, target = id, evidence = command,
+    records = docs, failure, read = true } = {}) {
+    const { source, reads } = fixture(records);
+    const requests = [];
+    const costs = [];
+    const usage = { input_tokens: 100, output_tokens: 20 };
+    const provider = createProviders({ apiKey: "fixture-key", async fetchRequest(_url, options) {
+      const body = JSON.parse(options.body);
+      const envelope = JSON.parse(body.input);
+      requests.push(envelope);
+      assert.equal(envelope.identity.name, "Aida");
+      assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+      if (requests.length <= 2) assert.equal(envelope.user.text, message);
+      let modelOutput = answer(envelope);
+      if (requests.length === 1) {
+        assert.match(body.instructions, /result\.skillRequest/);
+        assert.ok(body.text.format.schema.properties.result.anyOf);
+        assert.equal(envelope.context.activeProject, null);
+        modelOutput = { result: read ? { skillRequest: { id: "find_project", version: 1, input: { projectId: target, operation, evidence } } } : modelOutput };
+      } else if (requests.length === 2) {
+        assert.equal(envelope.user.source, requests[0].user.source);
+        assert.deepEqual(envelope.affect, requests[0].affect);
+        assert.deepEqual(envelope.memory, requests[0].memory);
+        assert.equal(envelope.context.retrievalComplete, true);
+        assert.equal(envelope.context.currentProjectId, operation === "enter" ? id : null);
+        assert.equal(envelope.context.projectRead.sectionCounts.short, 1);
+        const project = operation === "enter" ? envelope.context.activeProject : envelope.context.lookupProject;
+        assert.equal(project.scope, "fictional");
+        assert.deepEqual(project.continuity.short, [short]);
+        if (failure === "transport") return new Response(null, { status: 502 });
+        if (failure === "repeat") modelOutput = { skillRequest: { id: "find_project", version: 1, input: { projectId: id, operation, evidence } } };
+      }
+      return Response.json({ status: "completed", usage, output: [{ type: "message", content: [
+        { type: "output_text", text: JSON.stringify(modelOutput) }
+      ] }] });
+    } });
+    const session = createConversationSession({
+      steward: createAwakeSteward(source), memoryStore: { recall: async () => null },
+      async provider(envelope) {
+        const response = await provider({ provider: "openai", model: openAIModel, envelope });
+        costs.push(response.usage.estimatedUsd);
+        return response.raw;
+      }
+    });
+    return { session, requests, reads, costs, send: () => session.send(message) };
+  }
+
+  for (const config of [{}, { operation: "lookup", message: question, evidence: name }]) {
+    const attempt = run(config);
+    const result = await attempt.send();
+    assert.deepEqual(attempt.costs, [0.00002, 0.00002]);
+    assert.equal(attempt.requests.length, 2);
+    assert.equal(attempt.reads.filter(file => file === path).length, 1);
+    assert.equal(attempt.session.recentTurnCount, 1);
+    assert.equal(result.receipt.outcome.status, config.operation ? "project_looked_up" : "project_selected");
+    await attempt.session.send("Continue.");
+    assert.equal(attempt.requests[2].context.currentProjectId, config.operation ? null : id);
+    assert.equal(attempt.requests[2].context.lookupProject, undefined);
+  }
+
+  const ordinary = run({ message: "Good morning, Aida.", read: false });
+  await ordinary.send();
+  assert.equal(ordinary.requests.length, 1);
+  assert.ok(!ordinary.reads.includes(path));
+
+  for (const [config, error] of [
+    [{ target: "invented" }, /Invalid or unauthorized skill request/],
+    [{ evidence: "Not in the message" }, /Invalid or unauthorized skill request/],
+    [{ message: question, evidence: name }, /Explicitly name/],
+    [{ records: { ...docs, "aida-context-projects.json": { projects: [entry, { ...entry, id: "other" }] } } }, /Which project/],
+    [{ records: { ...docs, [path]: null } }, /continuity record is missing/]
+  ]) {
+    const attempt = run(config);
+    await assert.rejects(attempt.send(), error);
+    assert.equal(attempt.requests.length, 1);
+    assert.equal(attempt.session.recentTurnCount, 0);
+  }
+  for (const failure of ["transport", "repeat"]) {
+    const attempt = run({ failure });
+    await assert.rejects(attempt.send(), error => error.skillFailure?.id === "find_project");
+    assert.equal(attempt.requests.length, 2);
+    assert.equal(attempt.session.recentTurnCount, 0);
+    await attempt.session.send("Continue.");
+    assert.equal(attempt.requests[2].context.currentProjectId, null);
+  }
+});
+
+test("fresh Lighthouse return sends verified project continuity and global context on the first model call", async () => {
+  const id = "the-clockwork-lighthouse";
+  const name = "The Clockwork Lighthouse";
+  const path = `aida-context-project-${id}.json`;
+  const entry = { id, name, description: "Fictional fixture.", status: "active", routingSummary: "Lighthouse story." };
+  const short = { source: "fixture:lighthouse", text: "The lighthouse clock stopped at midnight." };
+  const docs = { ...files, "aida-context-projects.json": { projects: [entry] }, [path]: { projectId: id, short: [short] } };
+  const phrase = "Aida, let's return to The Clockwork Lighthouse.";
+  const { source, reads } = fixture(docs);
+  let calls = 0;
+  const provider = createProviders({ apiKey: "fixture-key", async fetchRequest(_url, options) {
+    calls++;
+    const envelope = JSON.parse(JSON.parse(options.body).input);
+    assert.equal(envelope.identity.name, "Aida");
+    assert.equal(envelope.context.currentProjectId, id);
+    assert.deepEqual(envelope.context.activeProject.continuity.short, [short]);
+    assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+    assert.ok(envelope.context.references.includes(`drive:${path.replace(/\.json$/, "")}`));
+    assert.equal(envelope.memory.facts[0].text, "Original memory.");
+    return Response.json({ status: "completed", output: [{ type: "message", content: [
+      { type: "output_text", text: JSON.stringify(answer(envelope)) }
+    ] }] });
+  } });
+  const session = createConversationSession({
+    steward: createAwakeSteward(source),
+    memoryStore: { recall: async () => ({ fileId: "first", record: { id: "first", text: "Original memory." } }) },
+    provider: async envelope => (await provider({ provider: "openai", model: openAIModel, envelope })).raw
+  });
+  assert.equal((await session.send(phrase)).receipt.outcome.projectId, id);
+  assert.equal(calls, 1);
+  await session.send("What happens now?");
+  assert.equal(calls, 2);
+  assert.ok(reads.includes(path));
+
+  const mention = fixture(docs);
+  await chat(createAwakeSteward(mention.source), envelope => {
+    assert.equal(envelope.context.currentProjectId, null);
+    return answer(envelope);
+  }).send("I remember The Clockwork Lighthouse.");
+  assert.ok(!mention.reads.includes(path));
+
+  const noCall = () => assert.fail("The model must not receive unresolved continuity");
+  const duplicate = fixture({ ...docs, "aida-context-projects.json": { projects: [entry, { ...entry, id: "other" }] } });
+  await assert.rejects(chat(createAwakeSteward(duplicate.source), noCall).send(phrase), /Which project/);
+  for (const continuity of [null, { projectId: id, unreadable: true }, { projectId: "wrong" }]) {
+    const broken = fixture({ ...docs, [path]: continuity });
+    await assert.rejects(chat(createAwakeSteward(broken.source), noCall).send(phrase),
+      /(?:missing|refused|mismatch)/);
+  }
+});
+
+test("named detail requests read only the selected fictional project without entering it", async () => {
+  const id = "the-clockwork-lighthouse";
+  const name = "The Clockwork Lighthouse";
+  const path = "aida-context-project-" + id + ".json";
+  const entry = { id, name, description: "Fictional fixture.", status: "active", routingSummary: "Lighthouse story.", scope: "fictional" };
+  const detail = { source: "fixture:lighthouse", text: "The clock stopped at midnight." };
+  const docs = { ...files, "aida-context-projects.json": { projects: [entry] }, [path]: { projectId: id, short: [detail] } };
+  const { source, reads } = fixture(docs);
+  const question = "What had we decided about The Clockwork Lighthouse?";
+  let calls = 0;
+  const session = chat(createAwakeSteward(source), envelope => {
+    calls++;
+    assert.equal(envelope.identity.name, "Aida");
+    assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+    assert.equal(envelope.context.currentProjectId, null);
+    if (calls <= 2) {
+      assert.equal(envelope.context.activeProject, null);
+      assert.equal(envelope.context.lookupProject.scope, "fictional");
+      assert.deepEqual(envelope.context.lookupProject.continuity.short, [detail]);
+      assert.ok(envelope.context.references.includes("drive:aida-context-project-" + id));
+      return answer(envelope, { rebuild: "meaningful_event", changes: [
+        { scope: "global", layer: "short", text: detail.text, rationale: "Must remain fictional.", sources: [detail.source] }
+      ] });
+    }
+    assert.equal(envelope.context.lookupProject, undefined);
+    assert.equal(envelope.context.global.short.length, 0);
+    return answer(envelope);
+  });
+  const result = await session.send(question);
+  assert.equal(calls, 1);
+  assert.equal(result.receipt.outcome.status, "project_looked_up");
+  assert.deepEqual(result.receipt.applied, []);
+  assert.deepEqual(result.envelope.context.projectRead, { operation: "lookup", status: "looked_up", projectId: id,
+    reference: "drive:aida-context-project-" + id, sectionCounts: { long: 0, short: 1, recent: 0, facts: 0, insights: 0 } });
+  await session.send("Recap the-clockwork-lighthouse.");
+  const readsAfterLookup = reads.length;
+  await session.send("I saw a poster for The Clockwork Lighthouse.");
+  assert.equal(reads.length, readsAfterLookup);
+
+  const noCall = () => assert.fail("Unresolved lookup must stop before calling the provider");
+  const duplicate = fixture({ ...docs, "aida-context-projects.json": { projects: [entry, { ...entry, id: "other" }] } });
+  await assert.rejects(chat(createAwakeSteward(duplicate.source), noCall).send(question), error =>
+    /Which project/.test(error.message));
+  for (const continuity of [null, { projectId: id, unreadable: true }, { projectId: "wrong" }]) {
+    const broken = fixture({ ...docs, [path]: continuity });
+    await assert.rejects(chat(createAwakeSteward(broken.source), noCall).send(question), error =>
+      /(?:missing|refused|mismatch)/.test(error.message));
+  }
 });

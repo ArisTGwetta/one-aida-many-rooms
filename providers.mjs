@@ -97,7 +97,7 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
       const parts = (result?.output ?? []).filter(item => item.type === "message").flatMap(item => item.content ?? []);
       const raw = parts.filter(part => part.type === "output_text").map(part => part.text).join("");
       if (result?.status !== "completed" || parts.some(part => part.type === "refusal") || !raw) {
-        throw new ProviderError("OpenAI did not complete the structured reply.");
+        throw Object.assign(new ProviderError("OpenAI did not complete the structured reply."), { usage: openAIUsage(result?.usage) });
       }
       return { raw, model: result.model ?? model, usage: openAIUsage(result.usage) };
     },
@@ -114,7 +114,8 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
       if (result?.done !== true || result.done_reason === "length" || typeof result.message?.content !== "string") {
         throw new ProviderError("Ollama did not complete the structured reply.");
       }
-      return { raw: result.message.content, model: result.model ?? model, usage: null };
+      return { raw: result.message.content, model: result.model ?? model, usage: Number.isSafeInteger(result.prompt_eval_count) && Number.isSafeInteger(result.eval_count)
+        ? { inputTokens: result.prompt_eval_count, outputTokens: result.eval_count, estimatedUsd: null } : null };
     }
   };
 
@@ -135,12 +136,32 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
         !Array.isArray(envelope.environment?.tools)) throw new ProviderError("Invalid conversation envelope.");
     const content = JSON.stringify(envelope);
     if (new TextEncoder().encode(content).byteLength > maxEnvelopeBytes) throw new ProviderError("The conversation envelope is too large.");
+    const finalSchema = object({ ...schema.properties, awake: awakeSchema });
+    const skills = envelope.context?.retrievalComplete ? [] :
+      envelope.context?.capabilities.filter(skill => skill.phase === "read") ?? [];
     const format = envelope.context
       ? { name: "aida_conversation_v02_awake", instructions: `${instructions} ${awakeInstructions}`,
-        schema: object({ ...schema.properties, awake: awakeSchema }), tokens: 2000 }
+        schema: finalSchema, tokens: 2000 }
       : { name: "aida_conversation_v02", instructions, schema, tokens: maxOutputTokens };
+    if (envelope.context?.retrievalComplete) {
+      format.instructions += " Give a final reply using the verified result as scoped evidence.";
+    }
+    if (skills.length) {
+      format.name = "aida_awake_with_skill";
+      format.instructions += " Return result as a final answer or return result.skillRequest to invoke one advertised read skill. Use its exact ID and version and follow its argument requirements. The next call must answer.";
+      format.schema = object({ result: { anyOf: [finalSchema, ...skills.map(skill => object({
+        skillRequest: object({
+          id: choices(skill.id), version: { type: "integer", enum: [skill.version] },
+          input: object(Object.fromEntries(skill.arguments.map(argument => [argument.name, argument.required ? string : { type: ["string", "null"] }])))
+        })
+      }))] } });
+    }
     const result = await adapters[provider](model, content, format);
-    parseConversationResponse(result.raw, envelope);
+    try {
+      parseConversationResponse(result.raw, envelope);
+    } catch (error) {
+      throw Object.assign(error, { usage: result.usage });
+    }
     return { ...result, provider };
   };
 }

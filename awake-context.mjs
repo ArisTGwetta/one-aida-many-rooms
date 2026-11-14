@@ -1,3 +1,4 @@
+import { projectSkills, deterministicProjectRequest } from "./project-skills.mjs";
 import { createDriveClient } from "./memory.mjs";
 
 const layers = ["long", "short", "recent", "facts", "insights"];
@@ -29,6 +30,8 @@ export const awakeInstructions = [
   "Return the awake section. Default to just_keep_talking when conversation needs no action.",
   "Use ask_for_help when uncertain. An implied request can propose a capability, but never grants permission.",
   "Use switch_project only when the user asks to switch and cite the current user message. A mention is not a switch.",
+  "When context.projectSelection is present, the steward already loaded the requested project. Use its continuity in this reply.",
+  "Use context.lookupProject to answer this turn only. Keep its scope, including fictional scope, separate from the active room and global memory.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
   "For an explicit request to create a project from this conversation, use propose_project with a stable slug target and arguments name and scope (fictional or real).",
@@ -267,7 +270,7 @@ export function validateAwake(awake, envelope) {
   const exact = (value, fields) => value && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).length === fields.length && fields.every(field => Object.hasOwn(value, field));
   const known = new Set([envelope.user.source, ...envelope.context.references]);
-  for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity]) {
+  for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity, envelope.context.lookupProject?.continuity]) {
     if (track) for (const layer of layers) for (const entry of track[layer] ?? []) known.add(entry.source);
   }
   const validSources = (refs, required) => Array.isArray(refs) && refs.length <= 4 && (!required || refs.length > 0) &&
@@ -288,35 +291,13 @@ export function validateAwake(awake, envelope) {
       if (allowed) fields.push("layer");
       if (!exact(entry, fields) || !["global", "project"].includes(entry.scope) ||
           (allowed && !allowed.includes(entry.layer)) ||
-          (entry.scope === "project" && !envelope.context.activeProject &&
-            !(group === "changes" && action.kind === "propose_project")) ||
+          (entry.scope === "project" && !(envelope.context.activeProject || envelope.context.lookupProject) &&
+            !(allowed && action.kind === "propose_project")) ||
           !bounded(entry.text, 400) || !bounded(entry.rationale, 240) || !validSources(entry.sources, true)) {
         throw new Error("Invalid scoped awake update or evidence.");
       }
     }
   }
-}
-
-export function projectPreview(envelope, awake) {
-  const { action, changes } = awake;
-  if (action.kind !== "propose_project" || action.uncertainty !== null ||
-      !action.sources.includes(envelope.user.source) || !stableId(action.target)) return null;
-  const args = Object.fromEntries(action.arguments.map(arg => [arg.name, arg.value]));
-  if (Object.keys(args).length !== 2 || !bounded(args.name, 120) || !["fictional", "real"].includes(args.scope)) return null;
-  const visible = new Map([...envelope.memory.recent, envelope.user].map(message => [message.source, message]));
-  const selected = changes.filter(change => change.scope === "project");
-  if (!selected.length || selected.some(change => change.sources.some(ref => !visible.has(ref)))) return null;
-  const seed = emptyContinuity();
-  const evidence = new Map();
-  for (const change of selected) {
-    if (seed[change.layer].length === 4) return null;
-    for (const ref of change.sources) evidence.set(ref, visible.get(ref));
-    seed[change.layer].push({ source: change.sources[0], text: change.text, sources: change.sources });
-  }
-  const entry = { id: action.target, name: args.name.trim(), description: args.name.trim(), status: "active",
-    routingSummary: args.name.trim(), scope: args.scope };
-  evidence.set(envelope.user.source, envelope.user);
-  return { entry, continuity: seed, evidence: [...evidence.values()], authorizationSource: envelope.user.source };
 }
 
 export function journalReceipt(result, supportingTurn) {
@@ -337,6 +318,9 @@ export function journalReceipt(result, supportingTurn) {
 }
 
 export function createAwakeSteward(source, { turns = 4, contextChars = 12000, recoveredTurns = [] } = {}) {
+  const skills = projectSkills(source);
+  let pendingPreview;
+  let pendingWrite;
   let base;
   let activeId = null;
   let project;
@@ -373,7 +357,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   }
 
   return {
-    async assemble(recent) {
+    async assemble(recent, user) {
       if (!base || refreshNext || sourceRevision !== source.revision) {
         base = await source.load();
         sourceRevision = source.revision;
@@ -386,23 +370,52 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       const global = track("global", base.global);
       const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, project.continuity) } : null;
       const size = JSON.stringify({ global, activeProject, recent }).length;
-      return {
+      const capabilities = skills.catalog(base.capabilities).filter(skill =>
+        skill.phase !== "read" || base.projects.some(entry => entry.id !== activeId));
+      const context = {
         global, activeProject, currentProjectId: activeId,
         likelyProjectId: activeId ?? base.likelyProjectId ?? null,
-        projects: base.projects, capabilities: base.capabilities,
+        projects: base.projects, capabilities,
         references: [...base.references, project?.reference].filter(Boolean),
         refresh: { due: count >= turns || (size >= contextChars && size > sizeAtRefresh), turnsSinceRefresh: count, contextChars: size }
       };
+      const request = user && deterministicProjectRequest(user, context.projects);
+      return request && context.capabilities.some(skill => skill.id === request.id && skill.version === request.version)
+        ? this.resolveSkill(context, user, request) : context;
     },
 
-    apply(envelope, awake, allowUpdates = true) {
+    async resolveSkill(context, user, request) {
+      if (!context.capabilities.some(skill => skill.id === request.id && skill.version === request.version && skill.phase === "read")) {
+        throw new Error("Skill is not advertised for this turn.");
+      }
+      const result = await skills.dispatch(request, { user, context }, "read");
+      return { ...skills.integrate(request, result, context, { track }), retrievalComplete: true };
+    },
+
+    async confirm(preview) {
+      if (!pendingPreview || preview !== pendingPreview) throw new Error("Confirm the current project preview.");
+      const result = await skills.dispatch({ id: "create_project", version: 1, input: { phase: "confirm", preview: pendingWrite } },
+        { confirmed: true }, "preview");
+      pendingPreview = pendingWrite = undefined;
+      return result;
+    },
+
+    async apply(envelope, awake, allowUpdates = true) {
       validateAwake(awake, envelope);
       const { action } = awake;
       const current = envelope.context.currentProjectId;
       let outcome = { status: "conversation", route: "conversation" };
       if (!allowUpdates) return { action, outcome: { status: "excluded" }, applied: [] };
       count++;
-      if (action.uncertainty !== null || action.kind === "ask_for_help") {
+      if (envelope.context.lookupProject) {
+        return { action, outcome: { status: "project_looked_up", projectId: envelope.context.lookupProject.id },
+          proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
+      }
+      if (envelope.context.projectSelection) {
+        activeId = current;
+        project = undefined;
+        outcome = { status: "project_selected", projectId: current };
+      } else if (action.uncertainty !== null || action.kind === "ask_for_help") {
         outcome = { status: "needs_clarification", route: "clarification" };
       } else if (action.kind === "switch_project") {
         const target = envelope.context.projects.find(entry => entry.id === action.target);
@@ -421,8 +434,14 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
         outcome = action.target === current && current
           ? { status: "project_continued", projectId: current } : { status: "needs_clarification", route: "project_selection" };
       } else if (action.kind === "propose_project") {
-        const preview = projectPreview(envelope, awake);
-        return { action, outcome: { status: preview ? "confirmation_required" : "proposed", route: "project_creation" },
+        const available = envelope.context.capabilities.some(skill =>
+          skill.id === "create_project" && skill.version === 1 && skill.phase === "preview");
+        const { preview } = available
+          ? await skills.dispatch({ id: "create_project", version: 1, input: { phase: "preview" } }, { envelope, awake }, "preview")
+          : { preview: null };
+        pendingPreview = preview;
+        pendingWrite = preview ? structuredClone(preview) : undefined;
+        return { action, outcome: { status: preview ? "confirmation_required" : available ? "proposed" : "unavailable", route: "project_creation" },
           preview, proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
       } else if (action.kind === "discover_capability") {
         outcome = { status: "proposed", route: action.kind };

@@ -110,5 +110,5 @@ test("missing memory is explicit in the model input, and invalid responses are r
   });
   assert.match((await session.send("What did I tell you?")).response.reply, /don't have/);
   invalid = true;
-  await assert.rejects(session.send("What did I tell you?"), /provider failed/);
+  await assert.rejects(session.send("What did I tell you?"), /response validation failed/);
 });

@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createProviders, maxEnvelopeBytes, openAIModel, ProviderError } from "./providers.mjs";
+import { ConversationValidationError } from "./conversation.mjs";
 
 const host = "127.0.0.1";
 const port = 8787;
@@ -10,7 +11,7 @@ const origin = `http://${authority}`;
 const routes = new Map([
   ["/", ["index.html", "text/html"]],
   ["/style.css", ["style.css", "text/css"]],
-  ...["app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs"]
+  ...["app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
     .map(name => [`/${name}`, [name, "text/javascript"]])
 ]);
 const provider = createProviders({
@@ -80,8 +81,11 @@ export async function handleRequest(request, response) {
     if (!input || typeof input !== "object") return send(response, 400, { error: "Invalid conversation request." });
     send(response, 200, await provider(input));
   } catch (error) {
+    if (error instanceof ConversationValidationError) {
+      return send(response, 502, { error: error.message, code: "conversation_validation", usage: error.usage });
+    }
     send(response, 502, { error: error instanceof ProviderError
-      ? error.message : "The provider reply did not match the requested contract." });
+      ? error.message : "The provider reply did not match the requested contract.", usage: error.usage });
   } finally {
     busy = false;
   }

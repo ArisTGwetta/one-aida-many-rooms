@@ -1,5 +1,5 @@
 import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
-import { createConversationSession, ConversationTransportError } from "./conversation.mjs";
+import { createConversationSession, ConversationTransportError, ConversationValidationError } from "./conversation.mjs";
 import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
 import { setupSleepPanel } from "./sleep-panel.mjs";
 import { createSleepStore } from "./sleep.mjs";
@@ -43,6 +43,13 @@ async function run(label, action, target = status) {
       browserKey = undefined;
     }
     target.textContent = error.message;
+    if (target.id === "chat-status" && (error.projectRead || error.providerCalls?.length)) {
+      byId("conversation-evidence").textContent = JSON.stringify({ projectRead: error.projectRead, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
+      byId("conversation-details").hidden = false;
+      byId("conversation-evidence-label").textContent = "Development evidence — turn failed";
+    } else if (target.id === "chat-status" && !byId("conversation-details").hidden) {
+      byId("conversation-evidence-label").textContent = "Development evidence — last successful turn";
+    }
   } finally {
     running = false;
     connect.disabled = false;
@@ -60,6 +67,7 @@ async function setupChat(folderId) {
   const projectData = byId("project-preview-data");
   const projectStatus = byId("project-save-status");
   let projectPreview;
+  let steward;
   function clearProjectPreview() {
     projectPreview = undefined;
     projectData.textContent = projectStatus.textContent = "";
@@ -69,7 +77,7 @@ async function setupChat(folderId) {
   byId("project-confirm").addEventListener("click", () => {
     if (!projectPreview || !token) return;
     run("Saving and verifying project…", async () => {
-      const saved = await contextSource.createProject(projectPreview);
+      const saved = await steward.confirm(projectPreview);
       projectPreview = undefined;
       projectData.textContent = JSON.stringify(saved, null, 2);
       return "Project created and verified in Drive.";
@@ -178,7 +186,19 @@ async function setupChat(folderId) {
   chatStatus.textContent = "Authorize Google Drive to start chatting.";
 
   let selection;
-  let evidence;
+  let providerCalls = [];
+  let sessionUsd = 0;
+
+  function showBudget() {
+    const total = providerCalls.reduce((sum, call) => sum + (call.usage?.estimatedUsd ?? 0), 0);
+    const tokens = key => providerCalls.reduce((sum, call) => sum + (call.usage?.[key] ?? 0), 0);
+    const incomplete = providerCalls.some(call => !call.usage ||
+      (call.provider === "openai" && call.usage.estimatedUsd == null));
+    byId("chat-budget").textContent = "Provider calls " + providerCalls.length +
+      " · Reported tokens " + tokens("inputTokens") + " in / " + tokens("outputTokens") +
+      " out · Estimated cloud cost $" + total.toFixed(7) + " this turn / $" + sessionUsd.toFixed(7) +
+      " this page session" + (incomplete ? " · Some usage unavailable" : "");
+  }
 
   async function invokeProvider(input) {
     if (localDevelopment) {
@@ -187,7 +207,10 @@ async function setupChat(folderId) {
         body: JSON.stringify(input)
       });
       const result = await response.json();
-      if (!response.ok) throw new ConversationTransportError(result.error ?? "The local server rejected the request.");
+      if (!response.ok) {
+        if (result.code === "conversation_validation") throw new ConversationValidationError(result.error);
+        throw new ConversationTransportError(result.error ?? "The local server rejected the request.");
+      }
       return result;
     }
     try {
@@ -202,7 +225,7 @@ async function setupChat(folderId) {
           browserKey = undefined;
           showSelection();
         }
-        throw new ConversationTransportError(error.message);
+        throw Object.assign(new ConversationTransportError(error.message), { usage: error.usage });
       }
       throw error;
     }
@@ -276,7 +299,7 @@ async function setupChat(folderId) {
     showSelection();
     session = createConversationSession({
       memoryStore: store,
-      steward: createAwakeSteward(contextSource, { recoveredTurns: turns }),
+      steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: turns })),
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope) {
@@ -337,12 +360,19 @@ async function setupChat(folderId) {
     const chosenDisposition = dispositionFor(submitted, retention.value);
     const supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
+      providerCalls = [];
+      showBudget();
       selection = await prepareSelection();
       if (chosenDisposition === "excluded" && availableSupport(preceding, "candidate")) {
         session.omitTurn(preceding.turn);
         preceding = undefined;
       }
-      const result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded" });
+      let result;
+      try {
+        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded" });
+      } catch (error) {
+        throw Object.assign(error, { providerCalls });
+      }
       if (chosenDisposition === "excluded") clearProjectPreview();
       if (result.receipt.preview) {
         projectPreview = result.receipt.preview;
@@ -357,13 +387,18 @@ async function setupChat(folderId) {
       sources = [turn.user.source, turn.aida.source];
       showJournalContext();
       byId("conversation-evidence").textContent = JSON.stringify({
-        ...evidence, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt, destination, proposalId, reviewId, sources }) =>
+        ...providerCalls.at(-1), providerCalls, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt, destination, proposalId, reviewId, sources }) =>
           ({ source, recordId, savedAt, destination, proposalId, reviewId, sources })),
         recentMessageCount: result.envelope.memory.recent.length, response: result.response,
         awakeContext: { projectId: result.envelope.context.currentProjectId, references: result.envelope.context.references },
+        projectRead: result.envelope.context.projectRead ? {
+          ...result.envelope.context.projectRead,
+          status: result.receipt.outcome.status === "project_selected" ? "activated" : result.envelope.context.projectRead.status
+        } : null,
         stewardReceipt: result.receipt
       }, null, 2);
       details.hidden = false;
+      byId("conversation-evidence-label").textContent = "Development evidence";
       if (message.value === submitted) message.value = "";
       retention.value = "auto";
       if (disposition === "candidate" || disposition === "provisional") {
@@ -389,13 +424,14 @@ async function setupChat(folderId) {
       }
       const outcome = result.receipt.outcome.status;
       return {
+        project_selected: "Project continuity loaded and room selected.",
+        project_looked_up: "Project continuity retrieved.",
         confirmation_required: result.receipt.preview ? "Project preview is ready for confirmation." :
           "Capability request recorded. It requires your confirmation.",
         proposed: "Request proposed for review.",
         unavailable: "The requested capability is unavailable.",
         invalid_arguments: "The capability request is missing valid arguments.",
         needs_clarification: "The request needs clarification.",
-        project_selected: "Project selected for the next turn."
       }[outcome] ?? "Reply received.";
     }, chatStatus);
   });
