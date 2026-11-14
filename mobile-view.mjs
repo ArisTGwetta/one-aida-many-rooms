@@ -1,19 +1,7 @@
-const byId = id => document.getElementById(id);
+import { portraitFor } from "./emotion-portrait.mjs";
+import { renderVisual } from "./visual-display.mjs";
 
-export function renderVisual(surface, item) {
-  if (item?.type === "image" && item.src) {
-    const image = document.createElement("img");
-    image.src = item.src;
-    image.alt = item.alt ?? "";
-    image.addEventListener("error", () => renderVisual(surface), { once: true });
-    surface.replaceChildren(image);
-    return;
-  }
-  const placeholder = document.createElement("span");
-  placeholder.className = "visual-placeholder";
-  placeholder.setAttribute("aria-hidden", "true");
-  surface.replaceChildren(placeholder);
-}
+const byId = id => document.getElementById(id);
 
 const room = byId("mobile-room");
 const settings = byId("mobile-settings");
@@ -24,9 +12,11 @@ const menu = byId("mobile-menu");
 const destinations = [
   [byId("mobile-settings-content"), [main]],
   [byId("mobile-history"), [transcript]],
-  [byId("mobile-compose"), [document.querySelector('label[for="message"]'), message,
+  [byId("mobile-label"), [document.querySelector('label[for="message"]')]],
+  [byId("mobile-entry"), [message, byId("send")]],
+  [byId("mobile-compose-options"), [
     document.querySelector('label[for="retention"]'), byId("retention"), byId("support-label"),
-    byId("send"), byId("chat-status")]]
+    byId("chat-status")]]
 ];
 const positions = new Map();
 let following = true;
@@ -93,7 +83,11 @@ byId("mobile-sleep").addEventListener("click", () => {
 });
 byId("mobile-theme").addEventListener("change", event => { document.body.dataset.mobileTheme = event.target.value; });
 byId("mobile-text-size").addEventListener("change", event => { room.dataset.textSize = event.target.value; });
-renderVisual(byId("aida-visual"));
+const surface = byId("aida-visual");
+renderVisual(surface, portraitFor());
+transcript.addEventListener("aida-affect", event => {
+  renderVisual(surface, portraitFor(event.detail));
+});
 
 transcript.addEventListener("scroll", () => {
   if (transcript.scrollTop === placedScrollTop) return;
@@ -101,8 +95,13 @@ transcript.addEventListener("scroll", () => {
   following = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 36;
 });
 new MutationObserver(records => {
+  if (!transcript.childElementCount) {
+    following = true;
+    placedScrollTop = undefined;
+    renderVisual(surface, portraitFor());
+    return;
+  }
   if (room.hidden) return;
-  if (!transcript.childElementCount) { following = true; placedScrollTop = undefined; return; }
   if (!following) return;
   const reply = records.flatMap(record => [...record.addedNodes]).reverse()
     .find(node => node.dataset?.speaker === "aida");

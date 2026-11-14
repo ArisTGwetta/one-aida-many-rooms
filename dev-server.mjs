@@ -1,3 +1,4 @@
+import { portraits } from "./emotion-portrait.mjs";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -10,9 +11,10 @@ const authority = `${host}:${port}`;
 const origin = `http://${authority}`;
 const routes = new Map([
   ["/", ["index.html", "text/html"]],
+  ...portraits.map(([, , , file]) => [`/portraits/${file}`, [`portraits/${file}`, "image/png"]]),
   ["/style.css", ["style.css", "text/css"]],
   ["/mobile-view.css", ["mobile-view.css", "text/css"]],
-  ...["mobile-view.mjs", "app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
+  ...["mobile-view.mjs", "emotion-portrait.mjs", "visual-display.mjs", "app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
     .map(name => [`/${name}`, [name, "text/javascript"]])
 ]);
 const provider = createProviders({
@@ -26,7 +28,7 @@ let busy = false;
 
 function send(response, status, body, type = "application/json") {
   response.writeHead(status, {
-    "Content-Type": `${type}; charset=utf-8`, "Cache-Control": "no-store",
+    "Content-Type": type === "image/png" ? type : `${type}; charset=utf-8`, "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"
   });
   response.end(type === "application/json" ? JSON.stringify(body) : body);
@@ -50,7 +52,7 @@ export async function handleRequest(request, response) {
     const asset = routes.get(path);
     if (asset) {
       try {
-        return send(response, 200, await readFile(new URL(asset[0], import.meta.url), "utf8"), asset[1]);
+        return send(response, 200, await readFile(new URL(asset[0], import.meta.url), asset[1] === "image/png" ? undefined : "utf8"), asset[1]);
       } catch {
         return send(response, 500, { error: "Could not load the application asset." });
       }

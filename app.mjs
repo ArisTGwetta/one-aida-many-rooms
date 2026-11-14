@@ -408,6 +408,9 @@ async function setupChat(folderId) {
       }
       const turn = { ...result.turn, conversationId };
       appendExchange(turn);
+      transcript.dispatchEvent(new CustomEvent("aida-affect", { detail: {
+        valence: result.response.affect.valence, arousal: result.response.affect.arousal
+      } }));
       disposition = chosenDisposition;
       preceding = { turn, disposition };
       sources = [turn.user.source, turn.aida.source];
