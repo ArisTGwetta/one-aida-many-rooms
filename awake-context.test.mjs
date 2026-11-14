@@ -440,3 +440,94 @@ test("owned context initialization survives interruption and flags missing, malf
     ...preview.continuity, short: [{ ...preview.continuity.short[0], text: "A dragon appeared." }]
   } }), /differs from the preview/);
 });
+
+test("multiline Lighthouse request can read once before the final response", async () => {
+  const id = "clockwork-lighthouse";
+  const name = "The Clockwork Lighthouse";
+  const path = "aida-context-project-" + id + ".json";
+  const entry = { id, name, description: "Fictional lighthouse.", status: "active", routingSummary: "Lighthouse story.", scope: "fictional" };
+  const short = { source: "fiction:clock", text: "The clock stopped at midnight." };
+  const docs = { ...files, "aida-context-projects.json": { projects: [entry] }, [path]: { projectId: id, short: [short] } };
+  const command = "Aida, let's return to The Clockwork Lighthouse.";
+  const multiline = "Hello, Aida!\n" + command + "\nWhat do you remember about where we left off?";
+  const question = "Hello, Aida!\nWhat had we decided about The Clockwork Lighthouse?";
+  function run({ operation = "enter", message = multiline, target = id, evidence = command,
+    records = docs, failure, read = true } = {}) {
+    const { source, reads } = fixture(records);
+    const requests = [];
+    const usage = { input_tokens: 100, output_tokens: 20 };
+    const provider = createProviders({ apiKey: "fixture-key", async fetchRequest(_url, options) {
+      const body = JSON.parse(options.body);
+      const envelope = JSON.parse(body.input);
+      requests.push(envelope);
+      assert.equal(envelope.identity.name, "Aida");
+      assert.deepEqual(envelope.context.global.long, files["aida-context-global.json"].long);
+      if (requests.length <= 2) assert.equal(envelope.user.text, message);
+      let modelOutput = answer(envelope);
+      if (requests.length === 1) {
+        assert.match(body.instructions, /result\.projectRead/);
+        assert.ok(body.text.format.schema.properties.result.anyOf);
+        assert.equal(envelope.context.activeProject, null);
+        modelOutput = { result: read ? { projectRead: { projectId: target, operation, evidence } } : modelOutput };
+      } else if (requests.length === 2) {
+        assert.equal(envelope.user.source, requests[0].user.source);
+        assert.deepEqual(envelope.affect, requests[0].affect);
+        assert.deepEqual(envelope.memory, requests[0].memory);
+        assert.equal(envelope.context.readCapability, undefined);
+        assert.equal(envelope.context.currentProjectId, operation === "enter" ? id : null);
+        assert.equal(envelope.context.projectRead.sectionCounts.short, 1);
+        const project = operation === "enter" ? envelope.context.activeProject : envelope.context.lookupProject;
+        assert.equal(project.scope, "fictional");
+        assert.deepEqual(project.continuity.short, [short]);
+        if (failure === "transport") return new Response(null, { status: 502 });
+        if (failure === "repeat") modelOutput = { projectRead: { projectId: id, operation, evidence } };
+      }
+      return Response.json({ status: "completed", usage, output: [{ type: "message", content: [
+        { type: "output_text", text: JSON.stringify(modelOutput) }
+      ] }] });
+    } });
+    const session = createConversationSession({
+      steward: createAwakeSteward(source), memoryStore: { recall: async () => null },
+      provider: async envelope => (await provider({ provider: "openai", model: openAIModel, envelope })).raw
+    });
+    return { session, requests, reads, send: () => session.send(message) };
+  }
+
+  for (const config of [{}, { operation: "lookup", message: question, evidence: name }]) {
+    const attempt = run(config);
+    const result = await attempt.send();
+    assert.equal(attempt.requests.length, 2);
+    assert.equal(attempt.reads.filter(file => file === path).length, 1);
+    assert.equal(attempt.session.recentTurnCount, 1);
+    assert.equal(result.receipt.outcome.status, config.operation ? "project_looked_up" : "project_selected");
+    await attempt.session.send("Continue.");
+    assert.equal(attempt.requests[2].context.currentProjectId, config.operation ? null : id);
+    assert.equal(attempt.requests[2].context.lookupProject, undefined);
+  }
+
+  const ordinary = run({ message: "Good morning, Aida.", read: false });
+  await ordinary.send();
+  assert.equal(ordinary.requests.length, 1);
+  assert.ok(!ordinary.reads.includes(path));
+
+  for (const [config, error] of [
+    [{ target: "invented" }, /Invalid project-read/],
+    [{ evidence: "Not in the message" }, /Invalid project-read/],
+    [{ message: question, evidence: name }, /clarify/],
+    [{ records: { ...docs, "aida-context-projects.json": { projects: [entry, { ...entry, id: "other" }] } } }, /clarify/],
+    [{ records: { ...docs, [path]: null } }, /Cannot load project continuity/]
+  ]) {
+    const attempt = run(config);
+    await assert.rejects(attempt.send(), error);
+    assert.equal(attempt.requests.length, 1);
+    assert.equal(attempt.session.recentTurnCount, 0);
+  }
+  for (const failure of ["transport", "repeat"]) {
+    const attempt = run({ failure });
+    await assert.rejects(attempt.send(), error => error.projectRead?.projectId === id);
+    assert.equal(attempt.requests.length, 2);
+    assert.equal(attempt.session.recentTurnCount, 0);
+    await attempt.session.send("Continue.");
+    assert.equal(attempt.requests[2].context.currentProjectId, null);
+  }
+});

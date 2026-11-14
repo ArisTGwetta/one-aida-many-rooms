@@ -44,6 +44,18 @@ function validateConversationResponse(raw, envelope) {
   } catch {
     throw new Error("The conversation provider did not return valid JSON.");
   }
+  if (hasFields(output, ["result"])) output = output.result;
+  if (hasFields(output, ["projectRead"])) {
+    const read = output.projectRead;
+    if (envelope.context?.readCapability !== "read_project" ||
+        !hasFields(read, ["projectId", "operation", "evidence"]) ||
+        !["lookup", "enter"].includes(read.operation) ||
+        !envelope.context.projects.some(project => project.id === read.projectId) ||
+        !text(read.evidence, 400) || !envelope.user.text.includes(read.evidence.trim())) {
+      throw new Error("Invalid project-read request or evidence.");
+    }
+    return { projectRead: { ...read, evidence: read.evidence.trim() } };
+  }
   const fields = ["version", "reply", "intent", "route", "affect", "candidates", "tools"];
   if (envelope.context) fields.push("awake");
   if (!hasFields(output, fields) ||
@@ -109,7 +121,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const order = Math.max(Date.parse(startedAt), lastOrder + 1);
         const [saved, canonical] = await Promise.all([memoryStore.recall(), loadCanonicalFacts()]);
         const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
-        const context = steward ? await steward.assemble(recent, user) : undefined;
+        let context = steward ? await steward.assemble(recent, user) : undefined;
         const envelope = {
           version: conversationVersion,
           identity: { name: "Aida", relationship: "The user's ongoing conversational companion." },
@@ -128,14 +140,26 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           user,
           ...(context ? { context } : {})
         };
-        let raw;
-        try {
-          raw = await provider(structuredClone(envelope));
-        } catch (error) {
-          if (error instanceof ConversationTransportError || error instanceof ConversationValidationError) throw error;
-          throw new Error("The conversation provider failed. Try again.");
+        async function requestReply() {
+          let raw;
+          try {
+            raw = await provider(structuredClone(envelope));
+          } catch (error) {
+            if (error instanceof ConversationTransportError || error instanceof ConversationValidationError) throw error;
+            throw new Error("The conversation provider failed. Try again.");
+          }
+          return parseConversationResponse(raw, envelope);
         }
-        const response = parseConversationResponse(raw, envelope);
+        let response = await requestReply();
+        if (response.projectRead) {
+          context = await steward.resolveRead(context, user, response.projectRead);
+          envelope.context = context;
+          try {
+            response = await requestReply();
+          } catch (error) {
+            throw Object.assign(error, { projectRead: context.projectRead });
+          }
+        }
         const receipt = steward ? steward.apply(envelope, response.awake, keepInContext) : undefined;
         const aida = { source: `turn:${turnId}:aida`, role: "aida", text: response.reply };
         if (keepInContext) recent = [...recent, user, aida].slice(-recentLimit);

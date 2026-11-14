@@ -454,9 +454,44 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
         ...(selected ? { projectSelection: { projectId: selected.id, source: user.source } } : {}),
         ...(lookupProject ? { lookupProject } : {}),
         ...(projectRead ? { projectRead } : {}),
+        ...(!selected && !lookupProject && base.projects.some(entry => entry.id !== activeId) ? { readCapability: "read_project" } : {}),
         projects: base.projects, capabilities: base.capabilities,
         references: [...new Set([...base.references, loaded?.reference, lookupRecord?.reference].filter(Boolean))],
         refresh: { due: count >= turns || (size >= contextChars && size > sizeAtRefresh), turnsSinceRefresh: count, contextChars: size }
+      };
+    },
+
+    async resolveRead(context, user, request) {
+      const { projectId, operation, evidence } = request;
+      const entry = context.projects.find(item => item.id === projectId);
+      const cited = context.projects.filter(item => namesProject(evidence, item));
+      const named = context.projects.filter(item => namesProject(user.text, item));
+      const target = requestedProject(evidence);
+      const explicitEntry = entry && [entry.id, entry.name.toLowerCase()].some(name =>
+        target === name || target === "project " + name) &&
+        user.text.split(/\r?\n|[.!?](?=\s|$)/u).some(clause =>
+          requestedProject(clause) === target);
+      if (!entry || projectId === context.currentProjectId || named.length > 1 || cited.length > 1 ||
+          (named.length === 1 && named[0].id !== projectId) ||
+          (cited.length === 1 && cited[0].id !== projectId) ||
+          (operation === "enter" && (!explicitEntry || cited.length !== 1))) {
+        throw Object.assign(new Error("Please clarify which project to look up or explicitly ask to enter it by name or ID."), {
+          projectRead: { operation, status: "clarification_required", projectId, reference: null, sectionCounts: null }
+        });
+      }
+      const record = await readProject(entry, operation);
+      const continuity = track("project:" + projectId, record.continuity);
+      const { readCapability, ...next } = context;
+      return {
+        ...next,
+        ...(operation === "enter" ? {
+          activeProject: { ...entry, continuity }, currentProjectId: projectId, likelyProjectId: projectId,
+          projectSelection: { projectId, source: user.source }
+        } : { lookupProject: { ...entry, continuity } }),
+        projectRead: { operation, status: operation === "enter" ? "loaded_for_entry" : "looked_up",
+          projectId, reference: record.reference,
+          sectionCounts: Object.fromEntries(layers.map(layer => [layer, continuity[layer].length])) },
+        references: [...new Set([...context.references, record.reference])]
       };
     },
 

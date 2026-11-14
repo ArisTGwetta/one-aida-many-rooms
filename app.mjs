@@ -43,10 +43,10 @@ async function run(label, action, target = status) {
       browserKey = undefined;
     }
     target.textContent = error.message;
-    if (target.id === "chat-status" && error.projectRead) {
-      byId("conversation-evidence").textContent = JSON.stringify({ projectRead: error.projectRead }, null, 2);
+    if (target.id === "chat-status" && (error.projectRead || error.providerCalls?.length)) {
+      byId("conversation-evidence").textContent = JSON.stringify({ projectRead: error.projectRead, providerCalls: error.providerCalls }, null, 2);
       byId("conversation-details").hidden = false;
-      byId("conversation-evidence-label").textContent = "Development evidence — project read stopped before provider call";
+      byId("conversation-evidence-label").textContent = "Development evidence — turn failed";
     } else if (target.id === "chat-status" && !byId("conversation-details").hidden) {
       byId("conversation-evidence-label").textContent = "Development evidence — last successful turn";
     }
@@ -185,7 +185,19 @@ async function setupChat(folderId) {
   chatStatus.textContent = "Authorize Google Drive to start chatting.";
 
   let selection;
-  let evidence;
+  let providerCalls = [];
+  let sessionUsd = 0;
+
+  function showBudget() {
+    const total = providerCalls.reduce((sum, call) => sum + (call.usage?.estimatedUsd ?? 0), 0);
+    const tokens = key => providerCalls.reduce((sum, call) => sum + (call.usage?.[key] ?? 0), 0);
+    const incomplete = providerCalls.some(call => !call.usage ||
+      (call.provider === "openai" && call.usage.estimatedUsd == null));
+    byId("chat-budget").textContent = "Provider calls " + providerCalls.length +
+      " · Reported tokens " + tokens("inputTokens") + " in / " + tokens("outputTokens") +
+      " out · Estimated cloud cost $" + total.toFixed(7) + " this turn / $" + sessionUsd.toFixed(7) +
+      " this page session" + (incomplete ? " · Some usage unavailable" : "");
+  }
 
   async function invokeProvider(input) {
     if (localDevelopment) {
@@ -212,7 +224,7 @@ async function setupChat(folderId) {
           browserKey = undefined;
           showSelection();
         }
-        throw new ConversationTransportError(error.message);
+        throw Object.assign(new ConversationTransportError(error.message), { usage: error.usage });
       }
       throw error;
     }
@@ -347,12 +359,19 @@ async function setupChat(folderId) {
     const chosenDisposition = dispositionFor(submitted, retention.value);
     const supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
+      providerCalls = [];
+      showBudget();
       selection = await prepareSelection();
       if (chosenDisposition === "excluded" && availableSupport(preceding, "candidate")) {
         session.omitTurn(preceding.turn);
         preceding = undefined;
       }
-      const result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded" });
+      let result;
+      try {
+        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded" });
+      } catch (error) {
+        throw Object.assign(error, { providerCalls });
+      }
       if (chosenDisposition === "excluded") clearProjectPreview();
       if (result.receipt.preview) {
         projectPreview = result.receipt.preview;
@@ -367,7 +386,7 @@ async function setupChat(folderId) {
       sources = [turn.user.source, turn.aida.source];
       showJournalContext();
       byId("conversation-evidence").textContent = JSON.stringify({
-        ...evidence, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt, destination, proposalId, reviewId, sources }) =>
+        ...providerCalls.at(-1), providerCalls, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt, destination, proposalId, reviewId, sources }) =>
           ({ source, recordId, savedAt, destination, proposalId, reviewId, sources })),
         recentMessageCount: result.envelope.memory.recent.length, response: result.response,
         awakeContext: { projectId: result.envelope.context.currentProjectId, references: result.envelope.context.references },
