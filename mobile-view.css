@@ -86,10 +86,92 @@
 #mobile-settings > button { position: sticky; top: 0; z-index: 1; }
 
 #mobile-workspace { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
-#mobile-workspace.palace-open { grid-template-rows: minmax(2rem, 1fr) minmax(0, 2fr); }
 #mind-palace { min-height: 0; overflow: auto; margin: 0; padding: .55rem; color: var(--ink); background: var(--paper); border-color: var(--line); }
 #mind-palace form { margin: 0; padding: 0; border: 0; }
 #mind-palace label { margin-top: .55rem; }
 #mind-palace input, #mind-palace select { width: 100%; box-sizing: border-box; font: inherit; }
 #mind-palace button { margin: .3rem .3rem .3rem 0; }
 #mobile-room nav button { padding-inline: .35rem; }
+
+/* Workspace rooms reuse the same portrait, transcript, and composer. */
+#mobile-room.workspace-room {
+  grid-template-columns: clamp(4.5rem, 18%, 8rem) minmax(0, 1fr);
+  grid-template-rows: auto minmax(3rem, .8fr) auto minmax(0, 3fr) auto;
+}
+.workspace-room .mobile-header, .workspace-room #mobile-compose,
+.workspace-room #mind-palace, .workspace-room nav { grid-column: 1 / -1; }
+.workspace-room #mobile-workspace, .workspace-room .mobile-lower { display: contents; }
+.workspace-room #aida-visual { grid-area: 2 / 1; }
+.workspace-room #mobile-history { grid-area: 2 / 2; }
+.workspace-room #mobile-compose { grid-row: 3; grid-template-rows: auto auto auto; }
+.workspace-room #mobile-compose-options { max-height: 3.4rem; }
+.workspace-room #mind-palace { grid-row: 4; }
+.workspace-room nav { grid-row: 5; }
+.library-desk { display: grid; gap: .75rem; }
+.library-results { min-width: 0; }
+@media (min-width: 650px) {
+  .library-desk { grid-template-columns: minmax(12rem, 1fr) minmax(0, 2fr); align-items: start; }
+}
+
+#welcome-entrance {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: auto;
+  margin: 0;
+  padding: .8rem 1rem;
+  border: 0;
+  border-radius: 0;
+  color: #effaf1;
+  background: radial-gradient(ellipse at 50% 32%, #244b42, #111b19 65%);
+}
+#welcome-settings { justify-self: end; }
+.welcome-card { width: min(100%, 20rem); margin: auto; text-align: center; }
+.welcome-card h2 { font: 600 clamp(1.8rem, 7vw, 2.6rem)/1.15 Georgia, serif; }
+.welcome-eye {
+  position: relative;
+  width: 4rem;
+  height: 1.6rem;
+  margin: .8rem auto 1.1rem;
+  border: 1px solid #9dceb9;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.welcome-eye::before {
+  content: "";
+  display: block;
+  margin: .24rem auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: #a5d6c1;
+  box-shadow: 0 0 1rem #a5d6c1;
+}
+.welcome-eye span { display: none; position: absolute; inset: 0 0 auto; height: 2px; background: #b4dfce; }
+.arriving .welcome-eye span { display: block; animation: welcome-scan 400ms ease-out both; }
+#welcome-entrance.arriving { animation: welcome-reveal 850ms ease-in-out both; }
+@keyframes welcome-scan { from { transform: translateY(0); } to { transform: translateY(1.6rem); } }
+@keyframes welcome-reveal {
+  0%, 30% { filter: brightness(1); }
+  48% { filter: brightness(0); }
+  75%, 100% { filter: brightness(1); }
+}
+.welcome-print {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1.2rem;
+  height: 1.45rem;
+  margin-right: .5rem;
+  border: 2px double currentColor;
+  border-radius: 52% 52% 45% 45%;
+  background: repeating-radial-gradient(ellipse, currentColor 0 1px, transparent 1px 3px);
+}
+#welcome-pin { margin: .5rem auto; }
+#welcome-pin input { text-align: center; font-size: 1.1rem; width: 7rem; }
+#welcome-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: .3rem; margin: .55rem auto; }
+#welcome-keys button { padding-inline: .3rem; }
+@media (prefers-reduced-motion: reduce) {
+  #welcome-entrance.arriving, .arriving .welcome-eye span { animation: none; }
+}

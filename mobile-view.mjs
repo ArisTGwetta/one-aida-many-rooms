@@ -32,7 +32,11 @@ function move(node, destination) {
 function openSettings(open, focus = true) {
   settings.hidden = !open;
   menu.setAttribute("aria-expanded", String(open));
-  if (focus) (open ? byId("close-mobile-settings") : menu).focus();
+  if (focus) {
+    const target = open ? byId("close-mobile-settings") :
+      entrance.hidden ? menu : byId("welcome-settings");
+    target.focus();
+  }
 }
 
 function switchView(mobile) {
@@ -44,11 +48,11 @@ function switchView(mobile) {
     for (const id of ["message", "retention", "journal-support", "send"]) byId(id).setAttribute("form", "chat-form");
     room.hidden = false;
     document.body.classList.add("mobile-presentation");
-    if (byId("chat").hidden || byId("send").disabled && byId("remember").disabled) openSettings(true);
+    showEntrance();
     transcript.scrollTop = transcript.scrollHeight;
     placedScrollTop = transcript.scrollTop;
     following = true;
-    if (settings.hidden) byId("close-mobile").focus();
+    if (settings.hidden) (entrance.hidden ? byId("close-mobile") : welcomeTitle).focus();
   } else {
     openSettings(false, false);
     for (const [element, anchor] of positions) anchor.replaceWith(element);
@@ -73,14 +77,17 @@ menu.addEventListener("click", () => openSettings(settings.hidden));
 byId("close-mobile-settings").addEventListener("click", () => openSettings(false));
 function showPalace(open) {
   byId("mind-palace").hidden = !open;
-  byId("mobile-workspace").classList.toggle("palace-open", open);
+  room.classList.toggle("workspace-room", open);
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    (open ? byId("mind-palace") : byId("mobile-workspace")).animate([{ opacity: .55 }, { opacity: 1 }], { duration: 160 });
+  }
   byId("mobile-palace").setAttribute("aria-expanded", String(open));
 }
 
 byId("mobile-palace").addEventListener("click", () => {
   openSettings(false, false);
   showPalace(byId("mind-palace").hidden);
-  if (!byId("mind-palace").hidden) byId("palace-query").focus();
+  if (!byId("mind-palace").hidden) byId("mind-palace-title").focus();
 });
 byId("mobile-chat").addEventListener("click", () => {
   openSettings(false, false);
@@ -138,5 +145,59 @@ function fitViewport() {
 viewport?.addEventListener("resize", fitViewport);
 viewport?.addEventListener("scroll", fitViewport);
 fitViewport();
+
+const entrance = byId("welcome-entrance");
+const entranceStatus = byId("welcome-status");
+const welcomeTitle = byId("welcome-title");
+let arrival;
+
+function setEntranceVisible(visible) {
+  entrance.hidden = !visible;
+  for (const element of room.children) {
+    if (element !== entrance) element.inert = visible;
+  }
+}
+
+function showEntrance() {
+  const ready = entrance.dataset.authorization === "ready";
+  if (!ready) {
+    clearTimeout(arrival);
+    arrival = undefined;
+    entrance.classList.remove("arriving");
+    welcomeTitle.textContent = "Welcome to Aida";
+    setEntranceVisible(!room.hidden);
+    return;
+  }
+  if (entrance.hidden || arrival !== undefined || room.hidden) return;
+  showPalace(false);
+  entrance.classList.add("arriving");
+  welcomeTitle.textContent = "Welcome. I'm Aida.";
+  arrival = setTimeout(() => {
+    setEntranceVisible(false);
+    arrival = undefined;
+    entrance.classList.remove("arriving");
+    if (!room.hidden) byId("mobile-chat").focus();
+  }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 850);
+}
+
+const pin = byId("welcome-code");
+for (const value of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "Clear", "0", "Delete"]) {
+  const key = document.createElement("button");
+  key.type = "button";
+  key.textContent = value;
+  key.addEventListener("click", () => {
+    if (value === "Clear") pin.value = "";
+    else if (value === "Delete") pin.value = pin.value.slice(0, -1);
+    else if (pin.value.length < pin.maxLength) pin.value += value;
+  });
+  byId("welcome-keys").append(key);
+}
+byId("welcome-settings").addEventListener("click", () => openSettings(true));
+byId("welcome-drive").addEventListener("click", () => byId("connect").click());
+entranceStatus.textContent = byId("status").textContent;
+new MutationObserver(showEntrance).observe(entrance, { attributes: true, attributeFilter: ["data-authorization"] });
+new MutationObserver(() => {
+  if (entrance.dataset.authorization !== "ready") entranceStatus.textContent = byId("status").textContent;
+}).observe(byId("status"), { childList: true, subtree: true });
 
 switchView(true);

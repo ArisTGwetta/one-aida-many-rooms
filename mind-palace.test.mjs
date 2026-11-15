@@ -78,3 +78,19 @@ test("sleep review separates pending and reviewed cards and Done only closes the
     else globalThis.document = original;
   }
 });
+
+test("welcome controls and the Library workspace reuse the shared application entry points", async () => {
+  const page = await readFile(new URL("./index.html", import.meta.url), "utf8");
+  const view = await readFile(new URL("./mobile-view.mjs", import.meta.url), "utf8");
+  const app = await readFile(new URL("./app.mjs", import.meta.url), "utf8");
+  const css = await readFile(new URL("./mobile-view.css", import.meta.url), "utf8");
+  assert.equal([...page.matchAll(/id="transcript"/g)].length, 1);
+  assert.equal([...page.matchAll(/id="message"/g)].length, 1);
+  assert.match(page, /id="welcome-code" type="password"/);
+  assert.match(view, /byId\("welcome-drive"\).*byId\("connect"\)\.click\(\)/);
+  assert.equal([...app.matchAll(/await loadOpenAIKey\(/g)].length, 1);
+  assert.equal([...app.matchAll(/await unlockProvider\(code\)/g)].length, 2);
+  assert.match(view, /if \(!ready\)[\s\S]+entrance\.classList\.add\("arriving"\)/);
+  assert.match(css, /\.workspace-room #mind-palace \{ grid-row: 4;/);
+  assert.match(css, /prefers-reduced-motion: reduce[\s\S]+animation: none/);
+});

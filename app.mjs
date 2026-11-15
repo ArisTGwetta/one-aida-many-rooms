@@ -18,6 +18,8 @@ let store;
 let session;
 let browserKey;
 let running = false;
+let driveReady = false;
+let refreshWelcome = () => {};
 let canSend = () => Boolean(session);
 let refreshJournalControls = () => {};
 const send = byId("send");
@@ -37,11 +39,13 @@ async function run(label, action, target = status) {
   connect.disabled = remember.disabled = recall.disabled = send.disabled = true;
   refreshJournalControls();
   target.textContent = label;
+  refreshWelcome();
   try {
     target.textContent = await action();
   } catch (error) {
     if (error.status === 401) {
       token = undefined;
+      driveReady = false;
       browserKey = undefined;
     }
     target.textContent = error.message;
@@ -59,6 +63,7 @@ async function run(label, action, target = status) {
     remember.disabled = recall.disabled = !token;
     send.disabled = !token || !canSend();
     refreshJournalControls();
+    refreshWelcome();
   }
 }
 
@@ -180,6 +185,7 @@ async function setupChat(folderId) {
     byId("route-code-field").hidden = ollama || localDevelopment || Boolean(browserKey);
     routeCode.required = !byId("route-code-field").hidden;
     routeCode.disabled = !routeCode.required;
+    refreshWelcome();
     byId("provider-status").textContent = ollama
       ? (localDevelopment && !dev.ollamaConfigured
         ? "Configure an Ollama endpoint on the development server."
@@ -240,6 +246,33 @@ async function setupChat(folderId) {
     }
   }
 
+  async function unlockProvider(code) {
+    browserKey = await loadOpenAIKey(folderId, code, token);
+    showSelection();
+  }
+
+  refreshWelcome = () => {
+    const needsPin = !localDevelopment && select.value === "openai" && !browserKey;
+    const entrance = byId("welcome-entrance");
+    entrance.dataset.authorization = driveReady && token ? needsPin ? "pin" : "ready" : "drive";
+    byId("welcome-drive").disabled = running || connect.disabled;
+    byId("welcome-drive").hidden = entrance.dataset.authorization !== "drive";
+    byId("welcome-pin").hidden = entrance.dataset.authorization !== "pin";
+    byId("welcome-unlock").disabled = running;
+  };
+  byId("welcome-pin").addEventListener("submit", event => {
+    event.preventDefault();
+    if (running || !driveReady || !token || byId("welcome-pin").hidden) return;
+    const input = byId("welcome-code");
+    const code = input.value;
+    input.value = "";
+    run("Unlocking provider…", async () => {
+      await unlockProvider(code);
+      return "Provider unlocked.";
+    }, byId("welcome-status"));
+  });
+  refreshWelcome();
+
   async function prepareSelection() {
     const selected = { provider: select.value, model: model.value.trim() };
     if (localDevelopment) return selected;
@@ -261,8 +294,7 @@ async function setupChat(folderId) {
     } else if (!browserKey) {
       const code = routeCode.value;
       routeCode.value = "";
-      browserKey = await loadOpenAIKey(folderId, code, token);
-      showSelection();
+      await unlockProvider(code);
     }
     return selected;
   }
@@ -534,6 +566,7 @@ try {
   }
   connect.addEventListener("click", () => run("Waiting for Google authorization…", async () => {
     token = undefined;
+    driveReady = false;
     browserKey = undefined;
     token = await authorize(oauth, config.google);
     try {
@@ -543,12 +576,15 @@ try {
       throw error;
     }
     await resetChat?.();
+    driveReady = true;
     return "Google Drive connected.";
   }));
   connect.disabled = false;
   status.textContent = "Authorize Google Drive to continue.";
+  refreshWelcome();
 } catch (error) {
   status.textContent = error.message;
+  byId("welcome-status").textContent = error.message;
 }
 
 byId("memory-form").addEventListener("submit", event => {
