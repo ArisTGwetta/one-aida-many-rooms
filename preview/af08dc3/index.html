@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aida · First Memory</title>
+  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./mobile-view.css">
+  <script type="module" src="./app.mjs"></script>
+  <script type="module" src="./mobile-view.mjs"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Aida</h1><button id="open-mobile" type="button">Try mobile view</button>
+      <p>Save one fact to Google Drive and recall it from another device.</p>
+    </header>
+    <details class="classic-secondary">
+      <summary>Drive authorization and memory</summary>
+    <form id="memory-form">
+      <button id="connect" type="button" disabled>Authorize Google Drive</button>
+      <label for="memory">What should Aida remember?</label>
+      <textarea id="memory" rows="4" maxlength="4000" required></textarea>
+      <div class="actions">
+        <button id="remember" disabled>Remember</button>
+        <button id="recall" type="button" disabled>Recall</button>
+      </div>
+      <p id="status" role="status">Loading configuration…</p>
+    </form>
+    <section id="evidence" hidden aria-labelledby="evidence-title">
+      <h2 id="evidence-title">Drive evidence</h2>
+      <dl>
+        <dt>Drive file ID</dt><dd id="file-id"></dd>
+        <dt>Saved at (UTC)</dt><dd id="saved-at"></dd>
+      </dl>
+      <pre id="record"></pre>
+    </section>
+    </details>
+    <section id="chat" hidden aria-labelledby="chat-title">
+      <h2 id="chat-title">Talk to Aida</h2>
+      <form id="chat-form">
+        <details id="provider-settings">
+          <summary>Provider settings</summary>
+        <label for="provider">Provider</label>
+        <select id="provider">
+          <option value="openai">OpenAI API</option>
+          <option value="ollama">Ollama</option>
+        </select>
+        <label for="model">Model</label>
+        <input id="model" maxlength="100" required>
+        <div id="ollama-endpoint-field" hidden>
+          <label for="ollama-endpoint">Ollama endpoint</label>
+          <input id="ollama-endpoint" type="url" maxlength="300" placeholder="https://ollama.example">
+        </div>
+        <div id="route-code-field" hidden>
+          <label for="route-code">OpenAI route code</label>
+          <input id="route-code" type="password" inputmode="numeric" maxlength="3" autocomplete="off">
+        </div>
+        <p id="provider-status"></p>
+        </details>
+        <div id="transcript" role="log" aria-label="Conversation"></div>
+        <label for="message">Message</label>
+        <textarea id="message" rows="3" maxlength="4000" required></textarea>
+        <label for="retention">Keep this exchange</label>
+        <select id="retention">
+          <option value="auto">This page only, unless I ask to remember</option>
+          <option value="provisional">Temporarily in Drive (24 hours)</option>
+          <option value="candidate">Save to the Drive journal</option>
+          <option value="exclude">Leave out of future context</option>
+        </select>
+        <label id="support-label" hidden><input type="checkbox" id="journal-support"> Include the preceding eligible exchange as supporting context</label>
+        <button id="send" disabled>Send</button>
+        <p id="chat-status" role="status"></p>
+        <button id="chatt-open" type="button" disabled>Ask Uncle Chatt</button>
+      </form>
+      <details id="journal">
+        <summary>RECENT journal</summary>
+        <p id="journal-status" role="status">Authorize Drive to recover saved exchanges.</p>
+        <p id="journal-context"></p>
+        <label for="conversation-id">Conversation ID</label>
+        <input id="conversation-id" maxlength="36">
+        <div class="actions">
+          <button id="journal-resume" type="button" disabled>Resume</button>
+          <button id="journal-new" type="button" disabled>New conversation</button>
+          <button id="journal-inspect" type="button" disabled>Inspect saved exchanges</button>
+          <button id="journal-older" type="button" hidden>Older entries</button>
+          <button id="journal-retry" type="button" hidden>Retry journal save</button>
+        </div>
+        <pre id="journal-records" hidden></pre>
+      </details>
+      <details id="context-records">
+        <summary>Drive context records</summary>
+        <fieldset id="context-controls" disabled>
+          <legend>Context initialization</legend>
+          <button id="context-check" type="button">Check context records</button>
+          <button id="context-init" type="button">Initialize empty context records</button>
+          <label for="context-project-id">Registered project ID</label>
+          <input id="context-project-id" maxlength="64">
+          <button id="context-project-init" type="button">Initialize project continuity</button>
+          <p id="context-status" role="status"></p>
+          <pre id="context-evidence" hidden></pre>
+        </fieldset>
+      </details>
+      <section id="project-preview" hidden aria-labelledby="project-preview-title">
+        <h2 id="project-preview-title">Review capability proposal</h2>
+        <p>Only the continuity and source excerpts shown below will be saved for this project.</p>
+        <pre id="project-preview-data"></pre>
+        <button id="project-confirm" type="button">Confirm proposal</button>
+        <button id="project-cancel" type="button">Discard preview</button>
+        <p id="project-save-status" role="status"></p>
+      </section>
+      <details id="sleep-panel">
+        <summary>Sleep and memory proposals</summary>
+        <fieldset id="sleep-controls" disabled>
+          <legend>Sleep cycle</legend>
+          <div class="actions">
+            <button id="sleep-run" type="button">Run sleep cycle</button>
+            <button id="sleep-older" type="button" hidden>Run on older evidence</button>
+            <button id="sleep-queue" type="button">Load review queue</button>
+            <button id="sleep-queue-older" type="button" hidden>Older proposals</button>
+          </div>
+          <p id="sleep-status" role="status"></p>
+          <pre id="sleep-report" hidden></pre>
+          <div id="sleep-proposals">
+            <h3>Pending proposals</h3>
+            <div id="sleep-pending"></div>
+            <details>
+              <summary>Reviewed</summary>
+              <div id="sleep-reviewed"></div>
+            </details>
+            <details>
+              <summary>Development Evidence</summary>
+              <div id="sleep-run-evidence"></div>
+            </details>
+          </div>
+        </fieldset>
+        <button id="sleep-done" type="button">Done reviewing</button>
+      </details>
+      <p id="chat-budget" aria-live="polite"></p>
+      <details id="conversation-details" hidden>
+        <summary id="conversation-evidence-label">Development evidence</summary>
+        <pre id="conversation-evidence"></pre>
+      </details>
+    </section>
+  </main>
+  <section id="mobile-room" aria-label="Aida mobile view" hidden>
+    <div class="mobile-header"><h2>Aida</h2><button id="close-mobile" type="button">Classic view</button></div>
+    <div id="mobile-workspace">
+      <div id="mobile-history"></div>
+    </div>
+    <section id="mind-palace" hidden aria-labelledby="mind-palace-title">
+      <h2 id="mind-palace-title" tabindex="-1">Library</h2>
+      <div class="library-desk">
+      <div class="library-search">
+        <form id="palace-search">
+          <label for="palace-query">What are we looking for?</label>
+          <input id="palace-query" type="search" maxlength="180" required>
+          <label for="palace-source">Where should we look?</label>
+          <select id="palace-source">
+          <option value="snail" disabled>Snail (private catalog verification pending)</option>
+          <option value="remember" selected>Remember — saved memory</option>
+          <option disabled>Conversation logs / Crawler (future)</option>
+          <option disabled>Diary / Librarian (future)</option>
+          <option disabled>Web (future)</option>
+          </select>
+          <button id="palace-find" type="submit" disabled>Search</button>
+          <button id="palace-suggest" type="button" disabled>Ask Aida for search terms</button>
+</form>
+          <div id="palace-proposal" hidden>
+            <label for="palace-proposed-query">Aida’s suggestion · Remember</label>
+            <input id="palace-proposed-query" maxlength="180">
+            <button id="palace-use" type="button">Use these terms</button>
+            <button id="palace-dismiss" type="button">Dismiss</button>
+          </div>
+        <p id="palace-status" role="status">Authorize Drive to search saved memory.</p>
+      </div>
+      <div class="library-results">
+      <div id="palace-results"></div>
+      <details><summary>Development Evidence</summary><pre id="palace-evidence"></pre></details>
+      </div>
+      </div>
+    </section>
+    <section id="glasses" hidden aria-labelledby="glasses-title">
+      <h2 id="glasses-title" tabindex="-1">Glasses</h2>
+      <p id="glasses-association">Project: Everyday Chat</p>
+      <button id="glasses-change-project" type="button">Change project</button>
+      <select id="glasses-project" aria-label="Inspection project" hidden></select>
+      <div class="actions">
+        <button id="glasses-new" type="button">New</button>
+        <button id="glasses-clear" type="button">Clear</button>
+        <button id="glasses-save" type="button">Save</button>
+        <button id="glasses-previous" type="button" disabled>Previous</button>
+        <button id="glasses-next" type="button" disabled>Next</button>
+      </div>
+      <input id="glasses-file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf,.pdf" hidden>
+      <img id="glasses-preview" alt="Image selected for inspection" hidden>
+      <p id="glasses-page" aria-live="polite"></p>
+      <p id="glasses-metadata"></p>
+      <p id="glasses-status" role="status">No image selected.</p>
+    </section>
+    <div class="mobile-lower">
+      <div id="aida-visual" aria-label="Aida’s visual display"></div>
+      <div id="mobile-compose">
+        <div id="mobile-label"></div>
+        <p id="library-provider-notice">Library messages include the last search status, query, and displayed Remember excerpt for the selected provider.</p>
+        <p id="glasses-notice">Send shares the active prepared image or PDF page with OpenAI while Glasses is open.</p>
+        <div id="mobile-entry"></div>
+        <div id="mobile-compose-options"></div>
+      </div>
+    </div>
+    <nav aria-label="Mobile controls">
+      <button id="mobile-sleep" type="button">Sleep</button>
+      <button id="mobile-chat" type="button">Chat</button>
+      <button id="mobile-palace" type="button" aria-controls="mind-palace" aria-expanded="false">Library</button>
+      <button id="mobile-glasses" type="button" aria-controls="glasses" aria-expanded="false">Glasses</button>
+      <button id="mobile-menu" type="button" aria-expanded="false" aria-controls="mobile-settings">Menu</button>
+    </nav>
+    <section id="welcome-entrance" aria-labelledby="welcome-title" hidden>
+      <button id="welcome-settings" type="button">Settings</button>
+      <div class="welcome-card">
+        <h2 id="welcome-title" tabindex="-1">Welcome to Aida</h2>
+        <div class="welcome-eye" aria-hidden="true"><span></span></div>
+        <button id="welcome-drive" type="button" disabled><span class="welcome-print" aria-hidden="true"></span>Authorize Google Drive</button>
+        <form id="welcome-pin" hidden>
+          <label for="welcome-code">Provider PIN</label>
+          <input id="welcome-code" type="password" inputmode="numeric" autocomplete="off" maxlength="3" pattern="[0-9]{3}" required>
+          <div id="welcome-keys" aria-label="Numeric keypad"></div>
+          <button id="welcome-unlock" type="submit">Unlock</button>
+        </form>
+        <p id="welcome-status" role="status"></p>
+      </div>
+    </section>
+  </section>
+  <aside id="mobile-settings" aria-label="Mobile settings" hidden>
+    <button id="close-mobile-settings" type="button">Back to chat</button>
+    <label for="mobile-theme">Appearance</label>
+    <select id="mobile-theme">
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+    <label for="mobile-text-size">Message text size</label>
+    <select id="mobile-text-size"><option value="regular">Regular</option><option value="large">Large</option></select>
+    <div id="mobile-settings-content"></div>
+  </aside>
+  <dialog id="chatt-dialog" aria-labelledby="chatt-title">
+    <h2 id="chatt-title">Ask Uncle Chatt</h2>
+    <p>Prepare a local draft to review and copy. You choose what to paste into ChatGPT.</p>
+    <form id="chatt-form">
+      <label for="chatt-question">Question</label>
+      <textarea id="chatt-question" rows="2" maxlength="1200" required></textarea>
+      <label><input id="chatt-include-recent" type="checkbox"> Include the latest chat context</label>
+      <button id="chatt-prepare" type="submit">Prepare brief</button>
+    </form>
+    <label for="chatt-brief">Editable brief</label>
+    <textarea id="chatt-brief" rows="8" maxlength="5000" disabled></textarea>
+    <div class="actions">
+      <button id="chatt-copy" type="button" disabled>Copy brief</button>
+      <button id="chatt-discard" type="button">Discard</button>
+    </div>
+    <p id="chatt-status" role="status"></p>
+  </dialog>
+</body>
+</html>
