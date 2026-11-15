@@ -16,7 +16,7 @@ const destinations = [
   [byId("mobile-entry"), [message, byId("send")]],
   [byId("mobile-compose-options"), [
     document.querySelector('label[for="retention"]'), byId("retention"), byId("support-label"),
-    byId("chat-status")]]
+    byId("chat-status"), byId("chatt-open")]]
 ];
 const positions = new Map();
 let following = true;

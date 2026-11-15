@@ -1,3 +1,4 @@
+import { setupUncleChatt, uncleChattBinding } from "./uncle-chatt.mjs";
 import { setupGlasses } from "./glasses.mjs";
 import { rememberSearchBinding, setupMindPalace } from "./mind-palace.mjs";
 import { projectSkills } from "./project-skills.mjs";
@@ -79,7 +80,9 @@ async function setupChat(folderId) {
   let steward;
   const glasses = setupGlasses({ contextSource, activeProjectId: () => steward?.activeProjectId ?? null,
     authorized: () => Boolean(token), run });
-  const skills = projectSkills(contextSource, [rememberSearchBinding(store, () => Boolean(token))]);
+  const skills = projectSkills(contextSource, [rememberSearchBinding(store, () => Boolean(token)),
+    uncleChattBinding(() => Boolean(token))]);
+  const chatt = setupUncleChatt({ registry: skills, contextSource, run, recent: () => session?.recentForHandoff() ?? [] });
   const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills, async suggest(workspace) {
     providerCalls = [];
     showBudget();
@@ -158,6 +161,7 @@ async function setupChat(folderId) {
   refreshJournalControls = () => {
     palace.refresh(running, Boolean(session));
     glasses.refresh(running);
+    chatt.refresh(running, Boolean(token && session));
     byId("project-confirm").disabled = running || !token || !projectPreview;
     byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
@@ -345,6 +349,7 @@ async function setupChat(folderId) {
     clearProjectPreview();
     palace.clear();
     glasses.reset();
+    chatt.reset();
     conversationId = id;
     conversationField.value = id;
     preceding = undefined;
@@ -470,6 +475,9 @@ async function setupChat(folderId) {
       const inspectionReceipt = visualReceipt(result);
       if (inspectionReceipt && chosenDisposition !== "excluded") turn.visualReceipt = inspectionReceipt;
       appendExchange(turn);
+      if (result.receipt.outcome.status === "proposed" && result.receipt.outcome.route === "ask_uncle_chatt") {
+        chatt.offer(turn.user.text);
+      }
       transcript.dispatchEvent(new CustomEvent("aida-affect", { detail: {
         valence: result.response.affect.valence, arousal: result.response.affect.arousal
       } }));

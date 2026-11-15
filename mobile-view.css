@@ -188,3 +188,8 @@
 #glasses-notice { display: none; }
 #mobile-room:has(#glasses:not([hidden])) #glasses-notice { display: block; margin: .1rem 0 .3rem; font-size: .78rem; }
 #mobile-room nav { flex-wrap: wrap; }
+
+#chatt-dialog { width: min(34rem, calc(100% - 2rem)); max-height: 85dvh; box-sizing: border-box; overflow: auto; border-radius: .8rem; border: 1px solid var(--line, #758b80); color: var(--ink, #203832); background: var(--paper, #fff); }
+#chatt-dialog form { margin: 0; padding: 0; border: 0; background: transparent; }
+#chatt-dialog textarea { font-size: max(1rem, 16px); }
+#chatt-dialog::backdrop { background: #0008; }

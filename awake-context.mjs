@@ -40,6 +40,7 @@ export const awakeInstructions = [
   "Use continue_project only for an explicitly intended continuation of context.currentProjectId. Set target to that stable ID and cite the current user message.",
   "Every action except just_keep_talking and ask_for_help requires one to four distinct supplied source IDs. Those two may use an empty sources array. Use null for absent target or uncertainty. Use at most eight uniquely named arguments, with stable slug names and nonblank values of at most 240 characters. Non-null target and uncertainty have limits of 120 and 240 characters.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
+  "If the catalog lists ask_uncle_chatt and the user explicitly asks or outside help would be useful, offer a user-reviewed draft via request_capability with the question and current user source. Never claim a draft was copied or sent.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
   "Propose source-grounded changes only when context meaning changes or refresh is due. LONG is purpose and enduring direction, SHORT is current situation and next steps, RECENT is meaningful events.",
   "Use separate global and active-project scopes. Changes add a current observation to a bounded working layer, not a canonical commit.",

@@ -71,6 +71,7 @@
         <label id="support-label" hidden><input type="checkbox" id="journal-support"> Include the preceding eligible exchange as supporting context</label>
         <button id="send" disabled>Send</button>
         <p id="chat-status" role="status"></p>
+        <button id="chatt-open" type="button" disabled>Ask Uncle Chatt</button>
       </form>
       <details id="journal">
         <summary>RECENT journal</summary>
@@ -242,5 +243,22 @@
     <select id="mobile-text-size"><option value="regular">Regular</option><option value="large">Large</option></select>
     <div id="mobile-settings-content"></div>
   </aside>
+  <dialog id="chatt-dialog" aria-labelledby="chatt-title">
+    <h2 id="chatt-title">Ask Uncle Chatt</h2>
+    <p>Prepare a local draft to review and copy. You choose what to paste into ChatGPT.</p>
+    <form id="chatt-form">
+      <label for="chatt-question">Question</label>
+      <textarea id="chatt-question" rows="2" maxlength="1200" required></textarea>
+      <label><input id="chatt-include-recent" type="checkbox"> Include the latest chat context</label>
+      <button id="chatt-prepare" type="submit">Prepare brief</button>
+    </form>
+    <label for="chatt-brief">Editable brief</label>
+    <textarea id="chatt-brief" rows="8" maxlength="5000" disabled></textarea>
+    <div class="actions">
+      <button id="chatt-copy" type="button" disabled>Copy brief</button>
+      <button id="chatt-discard" type="button">Discard</button>
+    </div>
+    <p id="chatt-status" role="status"></p>
+  </dialog>
 </body>
 </html>

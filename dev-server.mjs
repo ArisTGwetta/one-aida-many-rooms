@@ -14,7 +14,7 @@ const routes = new Map([
   ...portraits.map(([, , , file]) => [`/portraits/${file}`, [`portraits/${file}`, "image/png"]]),
   ["/style.css", ["style.css", "text/css"]],
   ["/mobile-view.css", ["mobile-view.css", "text/css"]],
-  ...["visual-preparation.mjs", "vendor/pdfjs/pdf.min.mjs", "vendor/pdfjs/pdf.worker.min.mjs", "glasses.mjs", "mind-palace.mjs", "mobile-view.mjs", "emotion-portrait.mjs", "visual-display.mjs", "app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
+  ...["uncle-chatt.mjs", "visual-preparation.mjs", "vendor/pdfjs/pdf.min.mjs", "vendor/pdfjs/pdf.worker.min.mjs", "glasses.mjs", "mind-palace.mjs", "mobile-view.mjs", "emotion-portrait.mjs", "visual-display.mjs", "app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
     .map(name => [`/${name}`, [name, "text/javascript"]])
 ]);
 const provider = createProviders({

@@ -115,6 +115,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
   let inFlight = false;
 
   return {
+    recentForHandoff() { return structuredClone(recent.slice(-4)); },
     get recentTurnCount() { return recent.length / 2; },
     omitTurn(turn) {
       recent = recent.filter(entry => entry.source !== turn.user.source && entry.source !== turn.aida.source);
