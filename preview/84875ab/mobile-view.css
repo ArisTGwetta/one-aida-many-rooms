@@ -1,0 +1,190 @@
+#mobile-room[hidden], #mobile-settings[hidden], .mobile-presentation [hidden] { display: none !important; }
+.mobile-presentation {
+  --paper: #f6f5ef;
+  --ink: #203832;
+  --line: #9fb2a7;
+  --aida-bubble: #e2ebe2;
+  --francisco-bubble: #ece5d9;
+  --portrait: #426e61;
+  background: var(--paper);
+  color: var(--ink);
+  overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .mobile-presentation:not([data-mobile-theme="light"]) {
+    color-scheme: dark;
+    --paper: #202124;
+    --ink: #f2f2f3;
+    --line: #85858b;
+    --aida-bubble: #303136;
+    --francisco-bubble: #414249;
+    --portrait: #777982;
+  }
+}
+.mobile-presentation[data-mobile-theme="dark"] {
+  color-scheme: dark;
+  --paper: #202124;
+  --ink: #f2f2f3;
+  --line: #85858b;
+  --aida-bubble: #303136;
+  --francisco-bubble: #414249;
+  --portrait: #777982;
+}
+#mobile-room, #mobile-settings {
+  position: fixed;
+  inset: var(--mobile-top, 0px) 0 auto;
+  height: var(--mobile-height, 100dvh);
+  box-sizing: border-box;
+  max-width: 48rem;
+  margin: auto;
+  padding: .65rem .75rem max(.65rem, env(safe-area-inset-bottom));
+  background: var(--paper);
+  color: var(--ink);
+  border: 0;
+  border-radius: 0;
+}
+#mobile-room { display: grid; grid-template-rows: auto minmax(4rem, 2fr) minmax(5rem, 1fr) auto; gap: .6rem; }
+.mobile-header, #mobile-room nav { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.mobile-header h2 { font: 600 2rem/1 Georgia, serif; margin: 0; }
+#mobile-room nav button { flex: 1; }
+#mobile-history, #mobile-history #transcript { min-height: 0; height: 100%; }
+#mobile-history #transcript { overflow: auto; overflow-anchor: none; padding-inline: .2rem; box-sizing: border-box; }
+#mobile-room[data-text-size="large"] #transcript { font-size: 1.2rem; }
+#mobile-history p { padding: .65rem .8rem; margin: .45rem 0; width: fit-content; max-width: 88%; line-height: 1.5; border-radius: 1rem; background: var(--aida-bubble); }
+#mobile-history [data-speaker="francisco"] { margin-left: auto; background: var(--francisco-bubble); }
+.mobile-lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: .65rem; min-height: 0; }
+#aida-visual { display: grid; place-items: center; min-height: 0; overflow: hidden; border-radius: 1rem; background: var(--aida-bubble); }
+#aida-visual img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+.visual-placeholder { width: 52%; max-width: 5rem; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #b9dac7, var(--portrait) 76%); }
+#mobile-compose { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+#mobile-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: .4rem; }
+#mobile-entry #send { margin: 0; padding-inline: .55rem; }
+#mobile-compose-options { overflow: auto; min-height: 0; }
+#mobile-entry textarea { height: 3rem; padding: .45rem; }
+@media (max-height: 480px) {
+  #mobile-label label { margin: 0; font-size: .8rem; }
+}
+#mobile-compose label { margin: .15rem 0 .3rem; }
+#mobile-compose textarea { min-height: 3rem; font-size: 16px; resize: none; }
+#mobile-compose select, #mobile-settings select { width: 100%; font: inherit; padding: .35rem; }
+#mobile-compose #chat-status { margin: .4rem 0; }
+#mobile-settings { z-index: 2; overflow: auto; border: 1px solid var(--line); }
+#mobile-settings main { padding: 0; }
+#mobile-settings main > header { display: none; }
+.mobile-presentation button, .mobile-presentation form, .mobile-presentation #mobile-settings section,
+.mobile-presentation textarea, .mobile-presentation input, .mobile-presentation select, .mobile-presentation pre {
+  color: var(--ink); background: var(--paper); border-color: var(--line);
+}
+@media (max-height: 480px) {
+  #mobile-room { gap: .25rem; grid-template-rows: auto minmax(2rem, 1fr) minmax(4.5rem, 1fr) auto; }
+  .mobile-header h2 { font-size: 1.4rem; }
+}
+
+#mobile-history p > span { display: block; font-size: .84em; font-weight: 700; margin-bottom: .18rem; }
+.mobile-speaker, #mobile-history .classic-speaker { display: none; }
+#mobile-history .mobile-speaker { display: block; }
+#mobile-settings > button { position: sticky; top: 0; z-index: 1; }
+
+#mobile-workspace { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+#mind-palace { min-height: 0; overflow: auto; margin: 0; padding: .55rem; color: var(--ink); background: var(--paper); border-color: var(--line); }
+#mind-palace form { margin: 0; padding: 0; border: 0; }
+#mind-palace label { margin-top: .55rem; }
+#mind-palace input, #mind-palace select { width: 100%; box-sizing: border-box; font: inherit; }
+#mind-palace button { margin: .3rem .3rem .3rem 0; }
+#mobile-room nav button { padding-inline: .35rem; }
+
+/* Workspace rooms reuse the same portrait, transcript, and composer. */
+#mobile-room.workspace-room {
+  grid-template-columns: clamp(4.5rem, 18%, 8rem) minmax(0, 1fr);
+  grid-template-rows: auto minmax(3rem, .8fr) auto minmax(0, 3fr) auto;
+}
+.workspace-room .mobile-header, .workspace-room #mobile-compose,
+.workspace-room #mind-palace, .workspace-room #glasses, .workspace-room nav { grid-column: 1 / -1; }
+.workspace-room #mobile-workspace, .workspace-room .mobile-lower { display: contents; }
+.workspace-room #aida-visual { grid-area: 2 / 1; }
+.workspace-room #mobile-history { grid-area: 2 / 2; }
+.workspace-room #mobile-compose { grid-row: 3; grid-template-rows: auto auto auto; }
+.workspace-room #mobile-compose-options { max-height: 3.4rem; }
+.workspace-room #mind-palace { grid-row: 4; }
+.workspace-room #glasses { grid-row: 4; min-height: 0; overflow: auto; margin: 0; padding: .65rem; color: var(--ink); background: var(--paper); border-color: var(--line); }
+.workspace-room nav { grid-row: 5; }
+.library-desk { display: grid; gap: .75rem; }
+.library-results { min-width: 0; }
+@media (min-width: 650px) {
+  .library-desk { grid-template-columns: minmax(12rem, 1fr) minmax(0, 2fr); align-items: start; }
+}
+
+#welcome-entrance {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: auto;
+  margin: 0;
+  padding: .8rem 1rem;
+  border: 0;
+  border-radius: 0;
+  color: #effaf1;
+  background: radial-gradient(ellipse at 50% 32%, #244b42, #111b19 65%);
+}
+#welcome-settings { justify-self: end; }
+.welcome-card { width: min(100%, 20rem); margin: auto; text-align: center; }
+.welcome-card h2 { font: 600 clamp(1.8rem, 7vw, 2.6rem)/1.15 Georgia, serif; }
+.welcome-eye {
+  position: relative;
+  width: 4rem;
+  height: 1.6rem;
+  margin: .8rem auto 1.1rem;
+  border: 1px solid #9dceb9;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.welcome-eye::before {
+  content: "";
+  display: block;
+  margin: .24rem auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: #a5d6c1;
+  box-shadow: 0 0 1rem #a5d6c1;
+}
+.welcome-eye span { display: none; position: absolute; inset: 0 0 auto; height: 2px; background: #b4dfce; }
+.arriving .welcome-eye span { display: block; animation: welcome-scan 400ms ease-out both; }
+#welcome-entrance.arriving { animation: welcome-reveal 850ms ease-in-out both; }
+@keyframes welcome-scan { from { transform: translateY(0); } to { transform: translateY(1.6rem); } }
+@keyframes welcome-reveal {
+  0%, 30% { filter: brightness(1); }
+  48% { filter: brightness(0); }
+  75%, 100% { filter: brightness(1); }
+}
+.welcome-print {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1.2rem;
+  height: 1.45rem;
+  margin-right: .5rem;
+  border: 2px double currentColor;
+  border-radius: 52% 52% 45% 45%;
+  background: repeating-radial-gradient(ellipse, currentColor 0 1px, transparent 1px 3px);
+}
+#welcome-pin { margin: .5rem auto; }
+#welcome-pin input { text-align: center; font-size: 1.1rem; width: 7rem; }
+#welcome-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: .3rem; margin: .55rem auto; }
+#welcome-keys button { padding-inline: .3rem; }
+@media (prefers-reduced-motion: reduce) {
+  #welcome-entrance.arriving, .arriving .welcome-eye span { animation: none; }
+}
+
+#palace-proposal { padding: .55rem; margin-top: .4rem; border: 1px solid var(--line); border-radius: .5rem; }
+#palace-results [data-selected="true"] { border-color: var(--ink); box-shadow: inset .2rem 0 var(--line); }
+
+#library-provider-notice { display: none; }
+#mobile-room:has(#mind-palace:not([hidden])) #library-provider-notice { display: block; margin: .1rem 0 .3rem; font-size: .78rem; }
+
+#glasses-preview { display: block; max-width: 100%; max-height: 50vh; margin: .6rem auto; object-fit: contain; }
+#glasses-metadata { overflow-wrap: anywhere; }
+#glasses-notice { display: none; }
+#mobile-room:has(#glasses:not([hidden])) #glasses-notice { display: block; margin: .1rem 0 .3rem; font-size: .78rem; }
+#mobile-room nav { flex-wrap: wrap; }
