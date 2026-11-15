@@ -6,7 +6,10 @@ export function setupSleepPanel({ store, journal, run, provider }) {
   const cycle = createSleepCycle({ journal, store, provider });
   const status = byId("sleep-status");
   const report = byId("sleep-report");
-  const proposals = byId("sleep-proposals");
+  const pending = byId("sleep-pending");
+  const reviewed = byId("sleep-reviewed");
+  const runs = byId("sleep-run-evidence");
+  const clearCards = () => [pending, reviewed, runs].forEach(group => group.replaceChildren());
   const olderEvidence = byId("sleep-older");
   const olderQueue = byId("sleep-queue-older");
   let evidenceCursor;
@@ -22,8 +25,15 @@ export function setupSleepPanel({ store, journal, run, provider }) {
     const latest = (await store.reviewPage(proposal.id, undefined, 1)).decisions[0];
     if (shown.has(proposal.id)) return false;
     shown.add(proposal.id);
-    const card = document.createElement("details");
-    const title = document.createElement("summary");
+    const card = document.createElement("article");
+    card.className = "sleep-card";
+    const title = document.createElement("h4");
+    const text = document.createElement("p");
+    const reason = document.createElement("p");
+    const sources = document.createElement("p");
+    const technical = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Development Evidence";
     const body = document.createElement("pre");
     const history = document.createElement("pre");
     history.hidden = true;
@@ -50,6 +60,11 @@ export function setupSleepPanel({ store, journal, run, provider }) {
       const needsCommit = proposal.destination === "aida/fact" && !proposal.synthetic && decision?.status === "accepted" && !committed;
       const commitLabel = committed ? " · committed to Drive" : needsCommit ? " · awaiting FACT commit" : "";
       title.textContent = `${proposal.category} · ${decision?.status ?? "pending"}${commitLabel}${proposal.synthetic ? " · synthetic" : ""}`;
+      text.textContent = effective.text;
+      reason.textContent = proposal.reason ? "Why: " + proposal.reason : "";
+      sources.textContent = "Sources: " + (proposal.sources?.join(", ") || "Unavailable");
+      const bucket = decision ? reviewed : pending;
+      if (card.parentNode !== bucket) bucket.append(card);
       body.textContent = JSON.stringify({
         ...proposal, status: decision?.status ?? "pending", effectiveText: effective.text,
         canonicalCommitVerified: committed, latestReview: decision ?? null
@@ -82,6 +97,7 @@ export function setupSleepPanel({ store, journal, run, provider }) {
       const content = JSON.stringify(page.decisions, null, 2);
       history.textContent = cursor ? `${history.textContent}\n\n${content}` : content;
       history.hidden = false;
+      technical.open = true;
       historyCursor = page.next;
       moreHistory.hidden = !historyCursor;
       return "Review history loaded from Drive.";
@@ -89,14 +105,14 @@ export function setupSleepPanel({ store, journal, run, provider }) {
     button("Review history", () => run("Reading review history…", () => loadHistory(), status));
     const moreHistory = button("Older decisions", () => run("Reading older decisions…", () => loadHistory(historyCursor), status));
     moreHistory.hidden = true;
-    card.append(title, body, label, actions, history);
-    proposals.append(card);
+    technical.append(summary, body, history);
+    card.append(title, text, reason, sources, label, actions, technical);
     return !decision;
   }
 
   async function loadQueue(cursor) {
     if (!cursor) {
-      proposals.replaceChildren();
+      clearCards();
       shown.clear();
     }
     const page = await store.queue(cursor);
@@ -108,7 +124,7 @@ export function setupSleepPanel({ store, journal, run, provider }) {
       title.textContent = `Sleep run · ${saved.createdAt}`;
       body.textContent = reportText(saved);
       details.append(title, body);
-      proposals.append(details);
+      runs.append(details);
       for (const item of saved.proposals) {
         if (await showProposal(item)) pendingCount++;
       }
@@ -134,6 +150,11 @@ export function setupSleepPanel({ store, journal, run, provider }) {
     return `${result.reused ? "Recovered saved run" : "Saved sleep run"}. ${count} proposal(s).`;
   }
 
+  byId("sleep-done").addEventListener("click", () => {
+    const panel = byId("sleep-panel");
+    panel.open = false;
+    panel.querySelector("summary").focus();
+  });
   byId("sleep-run").addEventListener("click", () => run("Examining eligible Drive evidence…", () => runCycle(), status));
   olderEvidence.addEventListener("click", () => run("Examining older Drive evidence…", () => runCycle(evidenceCursor), status));
   byId("sleep-queue").addEventListener("click", () => run("Loading review queue…", () => loadQueue(), status));
@@ -142,7 +163,7 @@ export function setupSleepPanel({ store, journal, run, provider }) {
     evidenceCursor = queueCursor = undefined;
     olderEvidence.hidden = olderQueue.hidden = report.hidden = true;
     status.textContent = report.textContent = "";
-    proposals.replaceChildren();
+    clearCards();
     shown.clear();
   };
 }

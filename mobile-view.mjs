@@ -63,6 +63,7 @@ function switchView(mobile) {
 
 // A required setting may need attention before the shared form can submit.
 byId("chat-form").addEventListener("invalid", event => {
+  if (byId("provider-settings").contains(event.target)) byId("provider-settings").open = true;
   if (!room.hidden && main.contains(event.target)) openSettings(true, false);
 }, true);
 
@@ -125,3 +126,5 @@ function fitViewport() {
 viewport?.addEventListener("resize", fitViewport);
 viewport?.addEventListener("scroll", fitViewport);
 fitViewport();
+
+switchView(true);

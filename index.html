@@ -15,6 +15,8 @@
       <h1>Aida</h1><button id="open-mobile" type="button">Try mobile view</button>
       <p>Save one fact to Google Drive and recall it from another device.</p>
     </header>
+    <details class="classic-secondary">
+      <summary>Drive authorization and memory</summary>
     <form id="memory-form">
       <button id="connect" type="button" disabled>Authorize Google Drive</button>
       <label for="memory">What should Aida remember?</label>
@@ -33,9 +35,12 @@
       </dl>
       <pre id="record"></pre>
     </section>
+    </details>
     <section id="chat" hidden aria-labelledby="chat-title">
       <h2 id="chat-title">Talk to Aida</h2>
       <form id="chat-form">
+        <details id="provider-settings">
+          <summary>Provider settings</summary>
         <label for="provider">Provider</label>
         <select id="provider">
           <option value="openai">OpenAI API</option>
@@ -52,6 +57,7 @@
           <input id="route-code" type="password" inputmode="numeric" maxlength="3" autocomplete="off">
         </div>
         <p id="provider-status"></p>
+        </details>
         <div id="transcript" role="log" aria-label="Conversation"></div>
         <label for="message">Message</label>
         <textarea id="message" rows="3" maxlength="4000" required></textarea>
@@ -114,8 +120,20 @@
           </div>
           <p id="sleep-status" role="status"></p>
           <pre id="sleep-report" hidden></pre>
-          <div id="sleep-proposals"></div>
+          <div id="sleep-proposals">
+            <h3>Pending proposals</h3>
+            <div id="sleep-pending"></div>
+            <details>
+              <summary>Reviewed</summary>
+              <div id="sleep-reviewed"></div>
+            </details>
+            <details>
+              <summary>Development Evidence</summary>
+              <div id="sleep-run-evidence"></div>
+            </details>
+          </div>
         </fieldset>
+        <button id="sleep-done" type="button">Done reviewing</button>
       </details>
       <p id="chat-budget" aria-live="polite"></p>
       <details id="conversation-details" hidden>

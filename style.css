@@ -60,3 +60,8 @@ pre { background: #eef4ee; padding: .75rem; border-radius: .5rem; white-space: p
 #journal-context { white-space: pre-wrap; overflow-wrap: anywhere; }
 #sleep-panel { margin-top: 1rem; }
 #sleep-controls { min-inline-size: 0; margin-top: .75rem; }
+
+.classic-secondary { margin-top: 1rem; }
+.sleep-card { padding: .8rem; margin: .7rem 0; border: 1px solid currentColor; border-radius: .6rem; overflow-wrap: anywhere; }
+.sleep-card h4 { margin: 0; }
+.sleep-card p { white-space: pre-wrap; }
