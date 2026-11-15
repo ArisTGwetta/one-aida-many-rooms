@@ -1,3 +1,4 @@
+import { setupGlasses } from "./glasses.mjs";
 import { rememberSearchBinding, setupMindPalace } from "./mind-palace.mjs";
 import { projectSkills } from "./project-skills.mjs";
 import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
@@ -76,6 +77,8 @@ async function setupChat(folderId) {
   const projectStatus = byId("project-save-status");
   let projectPreview;
   let steward;
+  const glasses = setupGlasses({ contextSource, activeProjectId: () => steward?.activeProjectId ?? null,
+    authorized: () => Boolean(token), run });
   const skills = projectSkills(contextSource, [rememberSearchBinding(store, () => Boolean(token))]);
   const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills, async suggest(workspace) {
     providerCalls = [];
@@ -154,6 +157,7 @@ async function setupChat(folderId) {
   canSend = () => Boolean(session && !pending);
   refreshJournalControls = () => {
     palace.refresh(running, Boolean(session));
+    glasses.refresh(running);
     byId("project-confirm").disabled = running || !token || !projectPreview;
     byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
@@ -340,6 +344,7 @@ async function setupChat(folderId) {
   function resetChat({ id, turns, entries }) {
     clearProjectPreview();
     palace.clear();
+    glasses.reset();
     conversationId = id;
     conversationField.value = id;
     preceding = undefined;
@@ -359,13 +364,13 @@ async function setupChat(folderId) {
       steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: turns, skills })),
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
-      async provider(envelope) {
+      async provider(envelope, image) {
         const call = { purpose: envelope.librarySuggestion ? "suggest_library_query" : providerCalls.length ? "answer_with_skill_result" :
           envelope.context.retrievalComplete ? "answer_with_preloaded_context" : "answer_or_request_skill",
           provider: selection.provider, model: selection.model, usage: null };
         providerCalls.push(call);
         try {
-          const input = envelope.librarySuggestion ? { librarySuggestion: envelope.librarySuggestion } : { envelope };
+          const input = envelope.librarySuggestion ? { librarySuggestion: envelope.librarySuggestion } : { envelope, ...(image ? { image } : {}) };
           const result = await invokeProvider({ ...selection, ...input });
           Object.assign(call, { model: result.model, usage: result.usage, status: "completed" });
           return result.raw;
@@ -428,6 +433,15 @@ async function setupChat(folderId) {
     if (send.disabled) return;
     const submitted = message.value;
     const libraryEvidence = palace.conversationEvidence();
+    const visual = glasses.snapshot();
+    if (visual?.evidence.status === "failed" || visual?.evidence.status === "loading") {
+      chatStatus.textContent = "Aida could not inspect the image. Choose a valid image or Clear.";
+      return;
+    }
+    if (visual?.image && (localDevelopment || select.value !== "openai")) {
+      chatStatus.textContent = "Image inspection is available only on the hosted OpenAI route. No image was sent.";
+      return;
+    }
     const chosenDisposition = dispositionFor(submitted, retention.value);
     const supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
@@ -440,8 +454,9 @@ async function setupChat(folderId) {
       }
       let result;
       try {
-        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded", libraryEvidence });
+        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded", libraryEvidence, visual });
       } catch (error) {
+        if (visual?.image) error.message = "Aida could not inspect the current image. " + error.message;
         throw Object.assign(error, { providerCalls });
       }
       if (chosenDisposition === "excluded") clearProjectPreview();
@@ -468,6 +483,13 @@ async function setupChat(folderId) {
         projectRead: result.envelope.context.projectRead ? {
           ...result.envelope.context.projectRead,
           status: result.receipt.outcome.status === "project_selected" ? "activated" : result.envelope.context.projectRead.status
+        } : null,
+        inspection: result.envelope.visualEvidence ? {
+          status: result.envelope.visualEvidence.status, projectId: result.envelope.visualEvidence.projectId ?? null,
+          initiatingRoom: result.envelope.visualEvidence.initiatingRoom,
+          initiatingProjectId: result.envelope.visualEvidence.initiatingProjectId,
+          projectChanged: result.envelope.visualEvidence.changed,
+          sourceHash: result.envelope.visualEvidence.source?.sha256 ?? null
         } : null,
         stewardReceipt: result.receipt
       }, null, 2);

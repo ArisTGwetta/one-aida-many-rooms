@@ -76,6 +76,8 @@ byId("close-mobile").addEventListener("click", () => switchView(false));
 menu.addEventListener("click", () => openSettings(settings.hidden));
 byId("close-mobile-settings").addEventListener("click", () => openSettings(false));
 function showPalace(open) {
+  byId("glasses").hidden = true;
+  byId("mobile-glasses").setAttribute("aria-expanded", "false");
   byId("mind-palace").hidden = !open;
   room.classList.toggle("workspace-room", open);
   if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -88,6 +90,20 @@ byId("mobile-palace").addEventListener("click", () => {
   openSettings(false, false);
   showPalace(byId("mind-palace").hidden);
   if (!byId("mind-palace").hidden) byId("mind-palace-title").focus();
+});
+byId("mobile-glasses").addEventListener("click", () => {
+  openSettings(false, false);
+  const panel = byId("glasses");
+  const open = panel.hidden;
+  const previous = byId("mind-palace").hidden ? "chat" : "library";
+  showPalace(false);
+  panel.hidden = !open;
+  room.classList.toggle("workspace-room", open);
+  byId("mobile-glasses").setAttribute("aria-expanded", String(open));
+  if (open) {
+    panel.dispatchEvent(new CustomEvent("glasses-open", { detail: previous }));
+    byId("glasses-title").focus();
+  }
 });
 byId("mobile-chat").addEventListener("click", () => {
   openSettings(false, false);

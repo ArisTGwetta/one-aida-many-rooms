@@ -365,7 +365,8 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   }
 
   return {
-    async assemble(recent, user) {
+    get activeProjectId() { return activeId; },
+    async assemble(recent, user, inspectionProjectId) {
       if (!base || refreshNext || sourceRevision !== source.revision) {
         base = await source.load();
         sourceRevision = source.revision;
@@ -373,19 +374,30 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
         project = undefined;
         refreshNext = false;
       }
-      const entry = base.projects.find(item => item.id === activeId);
-      if (entry && !project) project = await source.project(entry.id);
+      const inspecting = inspectionProjectId !== undefined;
+      const scopedId = inspecting ? inspectionProjectId : activeId;
+      const entry = base.projects.find(item => item.id === scopedId);
+      if (inspecting && scopedId && !entry) throw new Error("The inspection project is no longer registered.");
+      let scopedProject;
+      if (inspecting && entry) {
+        scopedProject = await source.project(entry.id);
+        if (!scopedProject.reference) throw new Error("Inspection project continuity is unavailable.");
+      } else if (entry) {
+        project ??= await source.project(entry.id);
+        scopedProject = project;
+      }
       const global = track("global", base.global);
-      const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, project.continuity) } : null;
+      const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, scopedProject.continuity) } : null;
       const size = JSON.stringify({ global, activeProject, recent }).length;
       const capabilities = skills.available(base.capabilities, { projects: base.projects, currentProjectId: activeId });
       const context = {
-        global, activeProject, currentProjectId: activeId,
-        likelyProjectId: activeId ?? base.likelyProjectId ?? null,
-        projects: base.projects, capabilities,
-        references: [...base.references, project?.reference].filter(Boolean),
+        global, activeProject, currentProjectId: scopedId,
+        likelyProjectId: inspecting ? scopedId : activeId ?? base.likelyProjectId ?? null,
+        projects: base.projects, capabilities: inspecting ? [] : capabilities,
+        references: [...base.references, scopedProject?.reference].filter(Boolean),
         refresh: { due: count >= turns || (size >= contextChars && size > sizeAtRefresh), turnsSinceRefresh: count, contextChars: size }
       };
+      if (inspecting) return context;
       const request = skills.plan({ user, context }, "read");
       return request ? this.resolveSkill(context, user, request) : context;
     },

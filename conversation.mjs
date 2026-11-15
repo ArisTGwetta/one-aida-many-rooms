@@ -129,7 +129,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         inFlight = false;
       }
     },
-    async send(message, { keepInContext = true, libraryEvidence } = {}) {
+    async send(message, { keepInContext = true, libraryEvidence, visual } = {}) {
       if (!text(message, 4000)) throw new Error("Enter a message between 1 and 4,000 characters.");
       if (inFlight) throw new Error("A conversation turn is already in progress.");
       inFlight = true;
@@ -140,7 +140,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const order = Math.max(Date.parse(startedAt), lastOrder + 1);
         const [saved, canonical] = await Promise.all([memoryStore.recall(), loadCanonicalFacts()]);
         const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
-        let context = steward ? await steward.assemble(recent, user) : undefined;
+        let context = steward ? await steward.assemble(recent, user, visual ? visual.evidence.projectId ?? null : undefined) : undefined;
         if (context && workspaceEvidence) {
           context = { ...context, capabilities: context.capabilities.filter(skill => skill.id !== "search_remember") };
         }
@@ -161,12 +161,13 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           environment: { recentStorage: recoveredTurns.length ? "drive-and-browser-session" : "browser-session", tools: [] },
           user,
           ...(workspaceEvidence ? { workspaceEvidence } : {}),
+          ...(visual ? { visualEvidence: structuredClone(visual.evidence) } : {}),
           ...(context ? { context } : {})
         };
         async function requestReply() {
           let raw;
           try {
-            raw = await provider(structuredClone(envelope));
+            raw = await provider(structuredClone(envelope), visual?.image);
           } catch (error) {
             if (error instanceof ConversationTransportError || error instanceof ConversationValidationError) throw error;
             throw new Error("The conversation provider failed. Try again.");
@@ -189,7 +190,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
               skillFailure: { id: response.skillRequest.id, version: response.skillRequest.version } });
           }
         }
-        const receipt = steward ? await steward.apply(envelope, response.awake, keepInContext) : undefined;
+        const receipt = steward ? await steward.apply(envelope, response.awake, keepInContext && !visual) : undefined;
         const aida = { source: `turn:${turnId}:aida`, role: "aida", text: response.reply };
         if (keepInContext) recent = [...recent, user, aida].slice(-recentLimit);
         lastOrder = order;
