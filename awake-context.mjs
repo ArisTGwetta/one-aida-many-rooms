@@ -390,7 +390,8 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       const global = track("global", base.global);
       const activeProject = entry ? { ...entry, continuity: track(`project:${entry.id}`, scopedProject.continuity) } : null;
       const size = JSON.stringify({ global, activeProject, recent }).length;
-      const capabilities = skills.available(base.capabilities, { projects: base.projects, currentProjectId: activeId });
+      const capabilities = skills.available(base.capabilities, { projects: base.projects, currentProjectId: activeId })
+        .filter(skill => !skill.libraryOnly);
       const context = {
         global, activeProject, currentProjectId: scopedId,
         likelyProjectId: inspecting ? scopedId : activeId ?? base.likelyProjectId ?? null,

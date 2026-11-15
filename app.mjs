@@ -1,3 +1,4 @@
+import { createSnailDriveReader, snailMiniBinding } from "./snail-mini.mjs";
 import { setupUncleChatt, uncleChattBinding } from "./uncle-chatt.mjs";
 import { setupGlasses } from "./glasses.mjs";
 import { rememberSearchBinding, setupMindPalace } from "./mind-palace.mjs";
@@ -81,7 +82,9 @@ async function setupChat(folderId) {
   const glasses = setupGlasses({ contextSource, activeProjectId: () => steward?.activeProjectId ?? null,
     authorized: () => Boolean(token), run });
   const skills = projectSkills(contextSource, [rememberSearchBinding(store, () => Boolean(token)),
-    uncleChattBinding(() => Boolean(token))]);
+    uncleChattBinding(() => Boolean(token)),
+    snailMiniBinding({ getCatalog: createSnailDriveReader(folderId, () => token),
+      authorized: () => Boolean(token), cacheKey: () => token })]);
   const chatt = setupUncleChatt({ registry: skills, contextSource, run, recent: () => session?.recentForHandoff() ?? [] });
   const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills, async suggest(workspace) {
     providerCalls = [];

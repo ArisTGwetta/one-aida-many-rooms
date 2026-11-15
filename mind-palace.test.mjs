@@ -26,13 +26,13 @@ test("Remember search dispatches a scoped read, returns recorded provenance, and
   assert.equal(reads, 2);
 });
 
-test("the desk has one composer and only the supported source is selectable", async () => {
+test("the desk has one composer and only supported sources are selectable", async () => {
   const page = await readFile(new URL("./index.html", import.meta.url), "utf8");
   assert.equal([...page.matchAll(/id="chat-form"/g)].length, 1);
   assert.equal([...page.matchAll(/id="message"/g)].length, 1);
   const options = page.match(/<select id="palace-source">([\s\S]+?)<\/select>/u)[1];
   assert.deepEqual([...options.matchAll(/<option([^>]*)>/g)].map(match => match[1].includes("disabled")),
-    [true, false, true, true, true]);
+    [false, false, true, true, true]);
 });
 
 test("sleep review separates pending and reviewed cards and Done only closes the panel", async () => {

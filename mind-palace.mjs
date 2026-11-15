@@ -65,7 +65,8 @@ export function createLibraryState() {
     accept() {
       const query = state.proposal?.query.trim();
       if (!query || query.length > 180) return false;
-      Object.assign(state, { query, source: state.proposal.source, proposal: null });
+      this.setSource(state.proposal.source);
+      Object.assign(state, { query, proposal: null });
       return true;
     },
     snapshot() {
@@ -81,7 +82,7 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
   const status = id("palace-status");
   const evidence = id("palace-evidence");
   const results = id("palace-results");
-  const registered = registry.descriptors().find(skill => skill.id === "search_remember");
+  const registered = new Map(registry.descriptors().map(skill => [skill.id, skill]));
   const workbench = createLibraryState();
   const query = id("palace-query");
   const sourceSelect = id("palace-source");
@@ -113,7 +114,9 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
     suggestButton.focus();
   });
   id("palace-use").addEventListener("click", () => {
+    const wasSnail = workbench.state.source === "snail";
     if (!workbench.accept()) { status.textContent = "Enter search terms before applying the suggestion."; return; }
+    if (wasSnail) { results.replaceChildren(); evidence.textContent = ""; }
     query.value = workbench.state.query;
     sourceSelect.value = workbench.state.source;
     renderProposal();
@@ -122,6 +125,7 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
   });
   suggestButton.addEventListener("click", () => {
     if (suggestButton.disabled || !token()) return;
+    if (workbench.state.source === "snail") { status.textContent = "Aida’s search suggestions currently support Remember."; return; }
     sync();
     const snapshot = workbench.snapshot();
     run("Asking Aida for search terms…", async () => {
@@ -135,20 +139,24 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
 
   id("palace-search").addEventListener("submit", event => {
     event.preventDefault();
-    if (!token() || id("palace-find").disabled || id("palace-source").value !== "remember") return;
+    if (!token() || id("palace-find").disabled) return;
+    const snail = sourceSelect.value === "snail";
+    if (!snail && sourceSelect.value !== "remember") return;
+    const capability = registered.get(snail ? "search_snail_mini" : "search_remember");
+    if (!capability) return;
     sync();
     const searched = workbench.begin();
-    const request = { id: registered.id, version: registered.version, input: { query: searched.query } };
+    const request = { id: capability.id, version: capability.version, input: { query: searched.query } };
     results.replaceChildren();
     evidence.textContent = "";
-    run("Reading saved memory…", async () => {
+    run(snail ? "Verifying the private Snail catalog…" : "Reading saved memory…", async () => {
       try {
         const context = await contextSource.load();
         if (!registry.catalog(context.capabilities).some(skill =>
           skill.id === request.id && skill.version === request.version && skill.availability === "available")) {
           throw new Error("This capability is unavailable.");
         }
-        const { matches } = await registry.dispatch(request, {}, "read");
+        const { matches, count, sourceManifestDigest } = await registry.dispatch(request, {}, "read");
         if (workbench.state.searched !== searched) return "The search source changed. Search again for current results.";
         workbench.complete(matches);
         for (const item of workbench.state.matches) {
@@ -156,6 +164,33 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
           card.className = "sleep-card";
           const title = document.createElement("h3");
           title.textContent = item.title;
+          if (snail) {
+            const place = document.createElement("details");
+            const label = document.createElement("summary");
+            label.textContent = "Show me where it is";
+            const note = document.createElement("p");
+            note.textContent = item.location ? "Recorded path · file access unverified" : "No verified location in the index.";
+            place.append(label, note);
+            if (item.location) {
+              const trail = document.createElement("ol");
+              for (const segment of item.location.breadcrumbs) {
+                const line = document.createElement("li");
+                line.textContent = segment;
+                trail.append(line);
+              }
+              const copy = document.createElement("button");
+              copy.type = "button";
+              copy.textContent = "Copy path";
+              copy.addEventListener("click", async () => {
+                try { await navigator.clipboard.writeText(item.location.address); status.textContent = "Path copied."; }
+                catch { note.textContent = item.location.address; status.textContent = "Select the recorded address to copy it."; }
+              });
+              place.append(trail, copy);
+            }
+            card.append(title, place);
+            results.append(card);
+            continue;
+          }
           const excerpt = document.createElement("p");
           excerpt.textContent = item.excerpt;
           const source = document.createElement("p");
@@ -191,7 +226,9 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
           results.append(card);
         }
         evidence.textContent = JSON.stringify({ id: request.id, version: request.version,
-          outcome: "completed", references: matches.map(item => item.reference) }, null, 2);
+          outcome: "completed", ...(snail ? { sourceManifestDigest } : {}),
+          references: matches.map(item => snail ? item.id : item.reference) }, null, 2);
+        if (snail) return count ? count + " match(es). Showing " + matches.length + "." : "No matches in this Snail catalog.";
         return matches.length ? "Found in the saved Drive memory." : "No match in the saved Drive memory.";
       } catch (error) {
         if (workbench.state.searched === searched) workbench.fail(error.message);
@@ -202,7 +239,7 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
   });
   return {
     conversationEvidence() {
-      return !id("mobile-room").hidden && !id("mind-palace").hidden ? workbench.evidence() : undefined;
+      return !id("mobile-room").hidden && !id("mind-palace").hidden && workbench.state.source === "remember" ? workbench.evidence() : undefined;
     },
     refresh(running, hasSession) {
       id("palace-find").disabled = running || !token();
