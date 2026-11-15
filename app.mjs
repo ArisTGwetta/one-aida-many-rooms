@@ -427,6 +427,7 @@ async function setupChat(folderId) {
     event.preventDefault();
     if (send.disabled) return;
     const submitted = message.value;
+    const libraryEvidence = palace.conversationEvidence();
     const chosenDisposition = dispositionFor(submitted, retention.value);
     const supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
@@ -439,7 +440,7 @@ async function setupChat(folderId) {
       }
       let result;
       try {
-        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded" });
+        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded", libraryEvidence });
       } catch (error) {
         throw Object.assign(error, { providerCalls });
       }

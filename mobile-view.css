@@ -178,3 +178,6 @@
 
 #palace-proposal { padding: .55rem; margin-top: .4rem; border: 1px solid var(--line); border-radius: .5rem; }
 #palace-results [data-selected="true"] { border-color: var(--ink); box-shadow: inset .2rem 0 var(--line); }
+
+#library-provider-notice { display: none; }
+.workspace-room #library-provider-notice { display: block; margin: .1rem 0 .3rem; font-size: .78rem; }

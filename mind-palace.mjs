@@ -31,6 +31,25 @@ export function createLibraryState() {
     error: null, searched: null, proposal: null };
   return {
     state,
+    setSource(source) {
+      if (source === state.source) return;
+      Object.assign(state, { source, searched: null, matches: [], selected: null, status: "idle", error: null });
+    },
+    evidence() {
+      const { searched, source, selected, matches, status } = state;
+      const current = searched?.source === source;
+      return {
+        kind: "library_search_result",
+        source,
+        query: current ? searched.query : null,
+        status: current ? status : "idle",
+        selectedReference: current ? selected : null,
+        ...(current && status === "failed" ? { error: "The Library search did not complete." } : {}),
+        results: current && status === "found" ? matches.slice(0, 1).map(({ title, reference, excerpt }) => ({
+          title, reference, excerpt: excerpt.slice(0, 4000), truncated: excerpt.length > 4000
+        })) : []
+      };
+    },
     begin() {
       state.searched = { query: state.query.trim(), source: state.source };
       Object.assign(state, { matches: [], selected: null, status: "searching", error: null });
@@ -71,7 +90,12 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
   const suggestButton = id("palace-suggest");
   const sync = () => {
     workbench.state.query = query.value;
-    workbench.state.source = sourceSelect.value;
+    if (workbench.state.source !== sourceSelect.value) {
+      workbench.setSource(sourceSelect.value);
+      results.replaceChildren();
+      evidence.textContent = "";
+      status.textContent = "Choose Search to query this source.";
+    }
   };
   query.addEventListener("input", sync);
   sourceSelect.addEventListener("change", sync);
@@ -125,6 +149,7 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
           throw new Error("This capability is unavailable.");
         }
         const { matches } = await registry.dispatch(request, {}, "read");
+        if (workbench.state.searched !== searched) return "The search source changed. Search again for current results.";
         workbench.complete(matches);
         for (const item of workbench.state.matches) {
           const card = document.createElement("article");
@@ -169,13 +194,16 @@ export function setupMindPalace({ token, run, contextSource, registry, suggest }
           outcome: "completed", references: matches.map(item => item.reference) }, null, 2);
         return matches.length ? "Found in the saved Drive memory." : "No match in the saved Drive memory.";
       } catch (error) {
-        workbench.fail(error.message);
+        if (workbench.state.searched === searched) workbench.fail(error.message);
         evidence.textContent = JSON.stringify({ id: request.id, version: request.version, outcome: "failed" }, null, 2);
         throw error;
       }
     }, status);
   });
   return {
+    conversationEvidence() {
+      return !id("mobile-room").hidden && !id("mind-palace").hidden ? workbench.evidence() : undefined;
+    },
     refresh(running, hasSession) {
       id("palace-find").disabled = running || !token();
       suggestButton.disabled = running || !token() || !hasSession;

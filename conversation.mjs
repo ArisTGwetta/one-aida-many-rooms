@@ -129,17 +129,21 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         inFlight = false;
       }
     },
-    async send(message, { keepInContext = true } = {}) {
+    async send(message, { keepInContext = true, libraryEvidence } = {}) {
       if (!text(message, 4000)) throw new Error("Enter a message between 1 and 4,000 characters.");
       if (inFlight) throw new Error("A conversation turn is already in progress.");
       inFlight = true;
       try {
+        const workspaceEvidence = libraryEvidence ? structuredClone(libraryEvidence) : undefined;
         const turnId = crypto.randomUUID();
         const startedAt = new Date().toISOString();
         const order = Math.max(Date.parse(startedAt), lastOrder + 1);
         const [saved, canonical] = await Promise.all([memoryStore.recall(), loadCanonicalFacts()]);
         const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
         let context = steward ? await steward.assemble(recent, user) : undefined;
+        if (context && workspaceEvidence) {
+          context = { ...context, capabilities: context.capabilities.filter(skill => skill.id !== "search_remember") };
+        }
         const envelope = {
           version: conversationVersion,
           identity: { ...identity },
@@ -156,6 +160,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           affect: { ...affect },
           environment: { recentStorage: recoveredTurns.length ? "drive-and-browser-session" : "browser-session", tools: [] },
           user,
+          ...(workspaceEvidence ? { workspaceEvidence } : {}),
           ...(context ? { context } : {})
         };
         async function requestReply() {
