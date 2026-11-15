@@ -77,7 +77,12 @@ async function setupChat(folderId) {
   let projectPreview;
   let steward;
   const skills = projectSkills(contextSource, [rememberSearchBinding(store, () => Boolean(token))]);
-  const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills });
+  const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills, async suggest(workspace) {
+    providerCalls = [];
+    showBudget();
+    selection = await prepareSelection();
+    return session.suggestLibrarySearch(workspace);
+  } });
   function clearProjectPreview() {
     steward?.cancelPreview(projectPreview);
     projectPreview = undefined;
@@ -148,7 +153,7 @@ async function setupChat(folderId) {
   let sources = [];
   canSend = () => Boolean(session && !pending);
   refreshJournalControls = () => {
-    palace.refresh(running);
+    palace.refresh(running, Boolean(session));
     byId("project-confirm").disabled = running || !token || !projectPreview;
     byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
@@ -355,12 +360,13 @@ async function setupChat(folderId) {
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope) {
-        const call = { purpose: providerCalls.length ? "answer_with_skill_result" :
+        const call = { purpose: envelope.librarySuggestion ? "suggest_library_query" : providerCalls.length ? "answer_with_skill_result" :
           envelope.context.retrievalComplete ? "answer_with_preloaded_context" : "answer_or_request_skill",
           provider: selection.provider, model: selection.model, usage: null };
         providerCalls.push(call);
         try {
-          const result = await invokeProvider({ ...selection, envelope });
+          const input = envelope.librarySuggestion ? { librarySuggestion: envelope.librarySuggestion } : { envelope };
+          const result = await invokeProvider({ ...selection, ...input });
           Object.assign(call, { model: result.model, usage: result.usage, status: "completed" });
           return result.raw;
         } catch (error) {

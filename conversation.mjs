@@ -4,6 +4,7 @@ export const conversationVersion = "0.2";
 export class ConversationTransportError extends Error {}
 export class ConversationValidationError extends Error {}
 const recentLimit = 6;
+const identity = { name: "Aida", relationship: "The user's ongoing conversational companion." };
 const memoryKinds = ["facts", "insights", "short", "long"];
 const intents = ["conversation", "recall", "memory_update", "tool_request"];
 const routes = ["reply", "memory_review", "tool_review"];
@@ -97,6 +98,15 @@ function validateConversationResponse(raw, envelope) {
   return output;
 }
 
+export function parseLibrarySuggestion(raw) {
+  let suggestion;
+  try { suggestion = JSON.parse(raw); } catch {}
+  if (!hasFields(suggestion, ["query"]) || (suggestion.query !== null && !text(suggestion.query, 180))) {
+    throw new ConversationValidationError("Aida returned an invalid Library suggestion.");
+  }
+  return suggestion.query?.trim() ?? null;
+}
+
 // The provider boundary accepts one envelope and returns JSON text.
 export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [], steward }) {
   let recent = recoveredTurns.flatMap(turn => [turn.user, turn.aida]).slice(-recentLimit);
@@ -108,6 +118,16 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
     get recentTurnCount() { return recent.length / 2; },
     omitTurn(turn) {
       recent = recent.filter(entry => entry.source !== turn.user.source && entry.source !== turn.aida.source);
+    },
+    async suggestLibrarySearch(workspace) {
+      if (inFlight) throw new Error("A conversation turn is already in progress.");
+      inFlight = true;
+      try {
+        const librarySuggestion = structuredClone({ identity, recent, affect, workspace });
+        return parseLibrarySuggestion(await provider({ librarySuggestion }));
+      } finally {
+        inFlight = false;
+      }
     },
     async send(message, { keepInContext = true } = {}) {
       if (!text(message, 4000)) throw new Error("Enter a message between 1 and 4,000 characters.");
@@ -122,7 +142,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         let context = steward ? await steward.assemble(recent, user) : undefined;
         const envelope = {
           version: conversationVersion,
-          identity: { name: "Aida", relationship: "The user's ongoing conversational companion." },
+          identity: { ...identity },
           memory: {
             long: [], short: [], insights: [],
             facts: [...(saved ? [{

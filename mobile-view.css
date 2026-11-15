@@ -175,3 +175,6 @@
 @media (prefers-reduced-motion: reduce) {
   #welcome-entrance.arriving, .arriving .welcome-eye span { animation: none; }
 }
+
+#palace-proposal { padding: .55rem; margin-top: .4rem; border: 1px solid var(--line); border-radius: .5rem; }
+#palace-results [data-selected="true"] { border-color: var(--ink); box-shadow: inset .2rem 0 var(--line); }

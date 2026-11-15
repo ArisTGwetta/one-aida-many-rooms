@@ -26,16 +26,95 @@ export function rememberSearchBinding(store, authorized) {
   };
 }
 
-export function setupMindPalace({ token, run, contextSource, registry }) {
+export function createLibraryState() {
+  const state = { query: "", source: "remember", matches: [], selected: null, status: "idle",
+    error: null, searched: null, proposal: null };
+  return {
+    state,
+    begin() {
+      state.searched = { query: state.query.trim(), source: state.source };
+      Object.assign(state, { matches: [], selected: null, status: "searching", error: null });
+      return state.searched;
+    },
+    complete(matches) { Object.assign(state, { matches, status: matches.length ? "found" : "empty" }); },
+    fail(error) { Object.assign(state, { status: "failed", error }); },
+    select(reference) {
+      if (state.matches.some(item => item.reference === reference)) state.selected = reference;
+    },
+    propose(query) { state.proposal = query === null ? null : { query, source: "remember" }; },
+    dismiss() { state.proposal = null; },
+    accept() {
+      const query = state.proposal?.query.trim();
+      if (!query || query.length > 180) return false;
+      Object.assign(state, { query, source: state.proposal.source, proposal: null });
+      return true;
+    },
+    snapshot() {
+      const { query, source, searched, selected, status, matches } = state;
+      return { query, source, searched, selected, status,
+        results: matches.map(({ id, title, reference }) => ({ id, title, reference })) };
+    }
+  };
+}
+
+export function setupMindPalace({ token, run, contextSource, registry, suggest }) {
   const id = name => document.getElementById(name);
   const status = id("palace-status");
   const evidence = id("palace-evidence");
   const results = id("palace-results");
   const registered = registry.descriptors().find(skill => skill.id === "search_remember");
+  const workbench = createLibraryState();
+  const query = id("palace-query");
+  const sourceSelect = id("palace-source");
+  const proposal = id("palace-proposal");
+  const proposedQuery = id("palace-proposed-query");
+  const suggestButton = id("palace-suggest");
+  const sync = () => {
+    workbench.state.query = query.value;
+    workbench.state.source = sourceSelect.value;
+  };
+  query.addEventListener("input", sync);
+  sourceSelect.addEventListener("change", sync);
+
+  function renderProposal() {
+    proposal.hidden = !workbench.state.proposal;
+    proposedQuery.value = workbench.state.proposal?.query ?? "";
+  }
+  proposedQuery.addEventListener("input", () => {
+    if (workbench.state.proposal) workbench.state.proposal.query = proposedQuery.value;
+  });
+  id("palace-dismiss").addEventListener("click", () => {
+    workbench.dismiss();
+    renderProposal();
+    suggestButton.focus();
+  });
+  id("palace-use").addEventListener("click", () => {
+    if (!workbench.accept()) { status.textContent = "Enter search terms before applying the suggestion."; return; }
+    query.value = workbench.state.query;
+    sourceSelect.value = workbench.state.source;
+    renderProposal();
+    status.textContent = "Suggestion applied. Review the terms, then select Search.";
+    query.focus();
+  });
+  suggestButton.addEventListener("click", () => {
+    if (suggestButton.disabled || !token()) return;
+    sync();
+    const snapshot = workbench.snapshot();
+    run("Asking Aida for search terms…", async () => {
+      const suggestion = await suggest(snapshot);
+      if (suggestion === null) return "Aida needs more context. Add search terms or discuss what you want in chat.";
+      workbench.propose(suggestion);
+      renderProposal();
+      return "Review Aida’s suggestion before applying it.";
+    }, status);
+  });
+
   id("palace-search").addEventListener("submit", event => {
     event.preventDefault();
     if (!token() || id("palace-find").disabled || id("palace-source").value !== "remember") return;
-    const request = { id: registered.id, version: registered.version, input: { query: id("palace-query").value.trim() } };
+    sync();
+    const searched = workbench.begin();
+    const request = { id: registered.id, version: registered.version, input: { query: searched.query } };
     results.replaceChildren();
     evidence.textContent = "";
     run("Reading saved memory…", async () => {
@@ -46,7 +125,8 @@ export function setupMindPalace({ token, run, contextSource, registry }) {
           throw new Error("This capability is unavailable.");
         }
         const { matches } = await registry.dispatch(request, {}, "read");
-        for (const item of matches) {
+        workbench.complete(matches);
+        for (const item of workbench.state.matches) {
           const card = document.createElement("article");
           card.className = "sleep-card";
           const title = document.createElement("h3");
@@ -66,6 +146,8 @@ export function setupMindPalace({ token, run, contextSource, registry }) {
               status.textContent = "There is no room in the draft for this reference.";
               return;
             }
+            workbench.select(item.reference);
+            card.dataset.selected = "true";
             message.value = draft;
             message.focus();
           });
@@ -74,7 +156,12 @@ export function setupMindPalace({ token, run, contextSource, registry }) {
           bring.textContent = "Bring this one";
           const address = document.createElement("p");
           address.hidden = true;
-          bring.addEventListener("click", () => { address.textContent = item.reference; address.hidden = false; });
+          bring.addEventListener("click", () => {
+            workbench.select(item.reference);
+            card.dataset.selected = "true";
+            address.textContent = item.reference;
+            address.hidden = false;
+          });
           card.append(title, excerpt, source, ask, bring, address);
           results.append(card);
         }
@@ -82,13 +169,25 @@ export function setupMindPalace({ token, run, contextSource, registry }) {
           outcome: "completed", references: matches.map(item => item.reference) }, null, 2);
         return matches.length ? "Found in the saved Drive memory." : "No match in the saved Drive memory.";
       } catch (error) {
+        workbench.fail(error.message);
         evidence.textContent = JSON.stringify({ id: request.id, version: request.version, outcome: "failed" }, null, 2);
         throw error;
       }
     }, status);
   });
   return {
-    refresh(running) { id("palace-find").disabled = running || !token(); },
-    clear() { results.replaceChildren(); evidence.textContent = ""; status.textContent = "Search the saved Drive memory."; }
+    refresh(running, hasSession) {
+      id("palace-find").disabled = running || !token();
+      suggestButton.disabled = running || !token() || !hasSession;
+    },
+    clear() {
+      Object.assign(workbench.state, createLibraryState().state);
+      query.value = "";
+      sourceSelect.value = workbench.state.source;
+      renderProposal();
+      results.replaceChildren();
+      evidence.textContent = "";
+      status.textContent = "Search the saved Drive memory.";
+    }
   };
 }

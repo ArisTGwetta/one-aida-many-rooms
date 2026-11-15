@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { rememberSearchBinding } from "./mind-palace.mjs";
+import { createLibraryState, rememberSearchBinding } from "./mind-palace.mjs";
 import { createSkillRegistry } from "./skill-registry.mjs";
 
 test("Remember search dispatches a scoped read, returns recorded provenance, and fails closed", async () => {
@@ -93,4 +93,60 @@ test("welcome controls and the Library workspace reuse the shared application en
   assert.match(view, /if \(!ready\)[\s\S]+entrance\.classList\.add\("arriving"\)/);
   assert.match(css, /\.workspace-room #mind-palace \{ grid-row: 4;/);
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]+animation: none/);
+});
+
+test("Library proposal leaves edits and results alone until explicitly applied", () => {
+  const desk = createLibraryState();
+  desk.state.query = "first memory";
+  assert.deepEqual(desk.begin(), { query: "first memory", source: "remember" });
+  desk.complete([{ id: "first", title: "Memory", reference: "drive:first", excerpt: "private fixture" }]);
+  desk.select("drive:unknown");
+  assert.equal(desk.state.selected, null);
+  desk.select("drive:first");
+  desk.propose("Aida's suggestion");
+  desk.state.query = "typed while waiting";
+  assert.equal(desk.state.query, "typed while waiting");
+  desk.dismiss();
+  assert.equal(desk.state.query, "typed while waiting");
+  desk.propose(" another suggestion ");
+  desk.state.proposal.query = "  edited suggestion  ";
+  assert.equal(desk.accept(), true);
+  assert.equal(desk.state.query, "edited suggestion");
+  assert.equal(desk.snapshot().searched.query, "first memory");
+  assert.equal(desk.snapshot().selected, "drive:first");
+  assert.equal(desk.snapshot().results[0].excerpt, undefined);
+  desk.begin();
+  desk.fail("fixture error");
+  assert.equal(desk.state.selected, null);
+  assert.deepEqual(desk.state.matches, []);
+  assert.equal(desk.state.status, "failed");
+});
+
+test("Aida suggests through one provider call with neither skill execution nor memory access", async () => {
+  const { createConversationSession } = await import("./conversation.mjs");
+  const { createProviders, openAIModel } = await import("./providers.mjs");
+  let calls = 0;
+  const invoke = createProviders({ apiKey: "fixture", async fetchRequest(_url, options) {
+    calls++;
+    const body = JSON.parse(options.body);
+    const input = JSON.parse(body.input);
+    assert.equal(input.identity.name, "Aida");
+    assert.equal(input.workspace.query, "draft");
+    assert.equal(body.max_output_tokens, 160);
+    assert.deepEqual(body.text.format.schema.required, ["query"]);
+    const reply = calls === 1 ? { query: " first memory " } : { skillRequest: { id: "search_remember" } };
+    return Response.json({ status: "completed", output: [{ type: "message", content: [
+      { type: "output_text", text: JSON.stringify(reply) }
+    ] }] });
+  } });
+  const never = () => assert.fail("A suggestion must not access memory or the dispatcher.");
+  const session = createConversationSession({
+    memoryStore: { recall: never }, loadCanonicalFacts: never, steward: { assemble: never, apply: never, resolveSkill: never },
+    async provider(input) { return (await invoke({ ...input, provider: "openai", model: openAIModel })).raw; }
+  });
+  assert.equal(await session.suggestLibrarySearch({ query: "draft", source: "remember" }), "first memory");
+  assert.equal(calls, 1);
+  assert.equal(session.recentTurnCount, 0);
+  await assert.rejects(session.suggestLibrarySearch({ query: "draft" }), /invalid Library suggestion/);
+  assert.equal(session.recentTurnCount, 0);
 });

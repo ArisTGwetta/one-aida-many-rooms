@@ -163,7 +163,14 @@
           <option disabled>Web (future)</option>
           </select>
           <button id="palace-find" type="submit" disabled>Search</button>
-        </form>
+          <button id="palace-suggest" type="button" disabled>Ask Aida for search terms</button>
+</form>
+          <div id="palace-proposal" hidden>
+            <label for="palace-proposed-query">Aida’s suggestion · Remember</label>
+            <input id="palace-proposed-query" maxlength="180">
+            <button id="palace-use" type="button">Use these terms</button>
+            <button id="palace-dismiss" type="button">Dismiss</button>
+          </div>
         <p id="palace-status" role="status">Authorize Drive to search saved memory.</p>
       </div>
       <div class="library-results">
