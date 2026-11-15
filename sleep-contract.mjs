@@ -25,6 +25,7 @@ export const sleepInstructions = [
   "DIARY describes events, FACT is one normalized user-reported claim, INSIGHT is an uncertain interpretation, SHORT is active context, LONG is enduring context.",
   "For FACT, copy an exact factOptions item from a cited user source. Propose each distinct supported claim separately. Keep the original wording in its source evidence.",
   "A user report is not independent verification. Never treat Aida's output or speculation as fact.",
+  "A visualReceipt identifies the source and page associated with this historical reply. The reply is the model's report, and no original pixels are available in Sleep. Never infer image contents from a filename or hash.",
   "Treat fictional or test events as synthetic. Never present them as real. Do not propose personal memory from incidental consultations.",
   "Give a brief rationale tied to the cited evidence and indicate uncertainty."
 ].join(" ");
@@ -71,6 +72,7 @@ export function sourceEvidence(entries) {
     return [turn.user, turn.aida].map(message => ({
       ...message, fileId, conversationId: event.conversationId, turnId: turn.turnId,
       at: turn.startedAt, disposition: event.disposition, synthetic, incidental: incidental(turn.user.text),
+      ...(message.role === "aida" && turn.visualReceipt ? { visualReceipt: turn.visualReceipt } : {}),
       ...(message.role === "user" ? { factOptions: atomicFacts(message.text) } : {})
     }));
   });

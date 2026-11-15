@@ -96,6 +96,10 @@ test("Glasses uses the authorized multipart route for follow-ups and keeps pixel
     assert.match(body.instructions, /active image|active visual source/);
     assert.equal(envelope.context.currentProjectId, pixelPart ? "atlas" : null);
     requests.push(pixelPart?.image_url ?? null);
+    if (envelope.user.text === "What changed?") {
+      assert.deepEqual(envelope.visualEvidence.page, { number: 2, total: 3 });
+      assert.match(body.instructions, /only that page was supplied/);
+    }
     const reply = { version: "0.2", reply: "Fixture visual reply.", intent: "conversation", route: "reply",
       affect: envelope.affect, candidates: { facts: [], insights: [], short: [], long: [] }, tools: [],
       awake: { action: { kind: "just_keep_talking", target: null, arguments: [], sources: [], uncertainty: null },
@@ -113,7 +117,9 @@ test("Glasses uses the authorized multipart route for follow-ups and keeps pixel
   });
   const first = await session.send("What do you see?", { visual: inspect(data(original)) });
   await session.send("Which color is on the right?", { visual: inspect(data(original)) });
-  await session.send("What changed?", { visual: inspect(data(replacement)) });
+  const pageTwo = inspect(data(replacement));
+  Object.assign(pageTwo.evidence, { adapted: true, page: { number: 2, total: 3 } });
+  await session.send("What changed?", { visual: pageTwo });
   const cleared = await session.send("What is active now?", { visual: inspect() });
   assert.ok(!JSON.stringify(cleared).includes("base64,"));
   assert.equal(first.receipt.outcome.status, "excluded");
@@ -122,4 +128,89 @@ test("Glasses uses the authorized multipart route for follow-ups and keeps pixel
   await assert.rejects(invoke({ provider: "ollama", model: "fixture", envelope: first.envelope, image: data(original) }), /selected route/);
   await assert.rejects(invoke({ provider: "openai", model: openAIModel, envelope: first.envelope }), /image is unavailable/);
   assert.equal(requests.length, 4);
+});
+
+test("a large valid image is adapted without changing the original bytes", async () => {
+  const { prepareSource } = await import("./visual-preparation.mjs");
+  const bytes = Buffer.alloc(maxImageBytes + 12);
+  original.copy(bytes);
+  const file = sample(bytes);
+  const canvas = (width, height) => ({ width, height,
+    getContext: () => ({ fillRect() {}, drawImage() {} }),
+    toBlob(callback) { callback(new Blob([Buffer.from([255, 216, 255, 217])], { type: "image/jpeg" })); }
+  });
+  const result = await prepareSource(file, { createCanvas: canvas,
+    decode: async () => ({ naturalWidth: 2, naturalHeight: 1 }) });
+  assert.equal(result.adapted, true);
+  assert.equal(result.metadata.bytes, bytes.length);
+  assert.equal(result.prepared.width, 2);
+  assert.ok(result.prepared.bytes <= maxImageBytes);
+  assert.notEqual(result.metadata.sha256, result.prepared.sha256);
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), bytes);
+  await assert.rejects(prepareSource(file, { decode: async () => { throw Error("invalid"); } }), /could not be decoded/);
+});
+
+test("PDF pages invalidate active pixels on Next, Previous and Clear", async () => {
+  const { prepareSource } = await import("./visual-preparation.mjs");
+  let disposed = 0;
+  const order = [];
+  let visiblePage = 0;
+  const openPdf = async () => ({ dispose: async () => { disposed++; }, document: {
+    numPages: 2, async getPage(number) {
+      order.push(number);
+      return {
+        getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale }),
+        render() { visiblePage = number; return { promise: Promise.resolve() }; },
+        cleanup() {}
+      };
+    }
+  } });
+  const createCanvas = (width, height) => ({ width, height, getContext: () => ({}),
+    toBlob(callback) { callback(new Blob([Uint8Array.of(255, 216, 255, visiblePage)], { type: "image/jpeg" })); }
+  });
+  const desk = createGlassesState(file => prepareSource(file, { openPdf, createCanvas }));
+  desk.enter("atlas", "library");
+  await desk.replace(new File(["%PDF-1.7 fixture"], "fixture.pdf", { type: "application/pdf" }));
+  const first = desk.snapshot();
+  assert.deepEqual(first.evidence.page, { number: 1, total: 2 });
+  const next = desk.navigate(2);
+  assert.equal(desk.snapshot().image, undefined);
+  await next;
+  const second = desk.snapshot();
+  assert.deepEqual(second.evidence.page, { number: 2, total: 2 });
+  assert.notEqual(second.image, first.image);
+  assert.equal(desk.snapshot().image, second.image);
+  assert.equal(second.evidence.projectId, "atlas");
+  await desk.navigate(1);
+  assert.equal(desk.snapshot().image, first.image);
+  assert.deepEqual(order, [1, 2, 1]);
+  desk.clear();
+  assert.equal(disposed, 1);
+  assert.equal(desk.snapshot().image, undefined);
+  assert.equal(desk.snapshot().evidence.page, null);
+});
+
+test("eligible RECENT turns pass historical page provenance to Sleep without storing pixels", async () => {
+  const { visualReceipt, makeJournalEvent } = await import("./recent-journal.mjs");
+  const { sourceEvidence } = await import("./sleep-contract.mjs");
+  const conversationId = crypto.randomUUID();
+  const turnId = crypto.randomUUID();
+  const at = new Date().toISOString();
+  const turn = { conversationId, turnId, order: 1, startedAt: at, completedAt: at,
+    user: { source: "turn:" + turnId + ":user", role: "user", text: "Please compare this page with the cover." },
+    aida: { source: "turn:" + turnId + ":aida", role: "aida", text: "A blue shape is in the top corner." } };
+  turn.visualReceipt = visualReceipt({ turn, envelope: { visualEvidence: {
+    status: "ready", source: { name: "fixture.pdf", sha256: "a".repeat(64) }, prepared: { sha256: "b".repeat(64) },
+    page: { number: 2, total: 3 }, adapted: true, initiatingRoom: "library", initiatingProjectId: null,
+    projectId: "atlas", changed: true
+  } } });
+  assert.equal(turn.visualReceipt.page, 2);
+  const event = makeJournalEvent(conversationId, turn, "candidate");
+  const observed = sourceEvidence([{ fileId: "fixture", event }]).find(item => item.role === "aida");
+  assert.equal(observed.text, turn.aida.text);
+  assert.equal(observed.visualReceipt.observationSource, observed.source);
+  assert.equal(observed.visualReceipt.kind, "historical_visual_inspection");
+  assert.throws(() => makeJournalEvent(conversationId, { ...turn, visualReceipt: {
+    ...turn.visualReceipt, pixels: "data:image/jpeg;base64,fixture"
+  } }, "candidate"), /invalid source evidence/);
 });

@@ -24,6 +24,39 @@ function validMessage(message, role, source) {
     typeof message.text === "string" && Boolean(message.text.trim()) && message.text.length <= 4000;
 }
 
+const visualKeys = ["kind", "at", "initiatingRoom", "initiatingProjectId", "projectId", "projectChanged",
+  "filename", "sourceHash", "preparedHash", "adapted", "page", "pageCount", "observationSource", "userSource"];
+
+function validVisualReceipt(value, turn) {
+  const validProject = id => id === null || (typeof id === "string" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id));
+  const validHash = hash => hash === null || (typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash));
+  return value && Object.keys(value).length === visualKeys.length && visualKeys.every(key => Object.hasOwn(value, key)) &&
+    value.kind === "historical_visual_inspection" && value.at === turn.completedAt &&
+    ["chat", "library"].includes(value.initiatingRoom) && validProject(value.initiatingProjectId) &&
+    validProject(value.projectId) && value.projectChanged === (value.projectId !== value.initiatingProjectId) &&
+    typeof value.filename === "string" && value.filename.length <= 180 && validHash(value.sourceHash) &&
+    validHash(value.preparedHash) && typeof value.adapted === "boolean" &&
+    (value.page === null ? value.pageCount === null :
+      Number.isInteger(value.page) && Number.isInteger(value.pageCount) &&
+      value.page >= 1 && value.page <= value.pageCount && value.pageCount <= 60) &&
+    value.observationSource === turn.aida.source && value.userSource === turn.user.source;
+}
+
+export function visualReceipt(result) {
+  const evidence = result.envelope.visualEvidence;
+  if (evidence?.status !== "ready" || !evidence.source || !evidence.prepared) return undefined;
+  const receipt = {
+    kind: "historical_visual_inspection", at: result.turn.completedAt,
+    initiatingRoom: evidence.initiatingRoom, initiatingProjectId: evidence.initiatingProjectId ?? null,
+    projectId: evidence.projectId ?? null, projectChanged: evidence.changed,
+    filename: evidence.source.name, sourceHash: evidence.source.sha256,
+    preparedHash: evidence.prepared.sha256, adapted: evidence.adapted,
+    page: evidence.page?.number ?? null, pageCount: evidence.page?.total ?? null,
+    observationSource: result.turn.aida.source, userSource: result.turn.user.source
+  };
+  return validVisualReceipt(receipt, result.turn) ? receipt : undefined;
+}
+
 function validateEvent(event) {
   const turns = event?.turns;
   if (event?.schema_version !== 1 || event.source !== "aida-chat" || !uuid(event.conversationId) ||
@@ -40,6 +73,7 @@ function validateEvent(event) {
         !timestamp(turn.completedAt) || turn.conversationId !== event.conversationId ||
         !validMessage(turn.user, "user", `turn:${turn.turnId}:user`) ||
         !validMessage(turn.aida, "aida", `turn:${turn.turnId}:aida`) ||
+        (turn.visualReceipt !== undefined && !validVisualReceipt(turn.visualReceipt, turn)) ||
         dispositionFor(turn.user.text, "auto") === "excluded") {
       throw new Error("A Drive journal turn has invalid source evidence.");
     }

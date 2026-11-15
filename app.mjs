@@ -3,7 +3,7 @@ import { rememberSearchBinding, setupMindPalace } from "./mind-palace.mjs";
 import { projectSkills } from "./project-skills.mjs";
 import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
 import { createConversationSession, ConversationTransportError, ConversationValidationError } from "./conversation.mjs";
-import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
+import { availableSupport, createJournal, dispositionFor, makeJournalEvent, visualReceipt } from "./recent-journal.mjs";
 import { setupSleepPanel } from "./sleep-panel.mjs";
 import { createSleepStore } from "./sleep.mjs";
 import { createAwakeSteward, createContextSource, journalReceipt } from "./awake-context.mjs";
@@ -467,6 +467,8 @@ async function setupChat(folderId) {
         projectPanel.hidden = false;
       }
       const turn = { ...result.turn, conversationId };
+      const inspectionReceipt = visualReceipt(result);
+      if (inspectionReceipt && chosenDisposition !== "excluded") turn.visualReceipt = inspectionReceipt;
       appendExchange(turn);
       transcript.dispatchEvent(new CustomEvent("aida-affect", { detail: {
         valence: result.response.affect.valence, arousal: result.response.affect.arousal
@@ -485,7 +487,8 @@ async function setupChat(folderId) {
           status: result.receipt.outcome.status === "project_selected" ? "activated" : result.envelope.context.projectRead.status
         } : null,
         inspection: result.envelope.visualEvidence ? {
-          status: result.envelope.visualEvidence.status, projectId: result.envelope.visualEvidence.projectId ?? null,
+          status: result.envelope.visualEvidence.status, page: result.envelope.visualEvidence.page ?? null,
+          adapted: result.envelope.visualEvidence.adapted, projectId: result.envelope.visualEvidence.projectId ?? null,
           initiatingRoom: result.envelope.visualEvidence.initiatingRoom,
           initiatingProjectId: result.envelope.visualEvidence.initiatingProjectId,
           projectChanged: result.envelope.visualEvidence.changed,
