@@ -84,3 +84,12 @@
 .mobile-speaker, #mobile-history .classic-speaker { display: none; }
 #mobile-history .mobile-speaker { display: block; }
 #mobile-settings > button { position: sticky; top: 0; z-index: 1; }
+
+#mobile-workspace { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+#mobile-workspace.palace-open { grid-template-rows: minmax(2rem, 1fr) minmax(0, 2fr); }
+#mind-palace { min-height: 0; overflow: auto; margin: 0; padding: .55rem; color: var(--ink); background: var(--paper); border-color: var(--line); }
+#mind-palace form { margin: 0; padding: 0; border: 0; }
+#mind-palace label { margin-top: .55rem; }
+#mind-palace input, #mind-palace select { width: 100%; box-sizing: border-box; font: inherit; }
+#mind-palace button { margin: .3rem .3rem .3rem 0; }
+#mobile-room nav button { padding-inline: .35rem; }

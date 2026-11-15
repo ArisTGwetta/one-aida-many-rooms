@@ -144,7 +144,28 @@
   </main>
   <section id="mobile-room" aria-label="Aida mobile view" hidden>
     <div class="mobile-header"><h2>Aida</h2><button id="close-mobile" type="button">Classic view</button></div>
-    <div id="mobile-history"></div>
+    <div id="mobile-workspace">
+      <div id="mobile-history"></div>
+      <section id="mind-palace" hidden aria-labelledby="mind-palace-title">
+        <h2 id="mind-palace-title">Mind Palace</h2>
+        <form id="palace-search">
+          <label for="palace-query">What are we looking for?</label>
+          <input id="palace-query" type="search" maxlength="180" required>
+          <label for="palace-source">Where should we look?</label>
+          <select id="palace-source">
+            <option value="snail" disabled>Snail (unavailable)</option>
+            <option value="remember" selected>Remember — saved memory</option>
+            <option disabled>Conversation logs / Crawler (future)</option>
+            <option disabled>Diary / Librarian (future)</option>
+            <option disabled>Web (future)</option>
+          </select>
+          <button id="palace-find" type="submit" disabled>Search</button>
+        </form>
+        <p id="palace-status" role="status">Authorize Drive to search saved memory.</p>
+        <div id="palace-results"></div>
+        <details><summary>Development Evidence</summary><pre id="palace-evidence"></pre></details>
+      </section>
+    </div>
     <div class="mobile-lower">
       <div id="aida-visual" aria-label="Aida’s visual display"></div>
       <div id="mobile-compose">
@@ -156,6 +177,7 @@
     <nav aria-label="Mobile controls">
       <button id="mobile-sleep" type="button">Sleep</button>
       <button id="mobile-chat" type="button">Chat</button>
+      <button id="mobile-palace" type="button" aria-controls="mind-palace" aria-expanded="false">Mind Palace</button>
       <button id="mobile-menu" type="button" aria-expanded="false" aria-controls="mobile-settings">Menu</button>
     </nav>
   </section>

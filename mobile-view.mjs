@@ -71,8 +71,20 @@ byId("open-mobile").addEventListener("click", () => switchView(true));
 byId("close-mobile").addEventListener("click", () => switchView(false));
 menu.addEventListener("click", () => openSettings(settings.hidden));
 byId("close-mobile-settings").addEventListener("click", () => openSettings(false));
+function showPalace(open) {
+  byId("mind-palace").hidden = !open;
+  byId("mobile-workspace").classList.toggle("palace-open", open);
+  byId("mobile-palace").setAttribute("aria-expanded", String(open));
+}
+
+byId("mobile-palace").addEventListener("click", () => {
+  openSettings(false, false);
+  showPalace(byId("mind-palace").hidden);
+  if (!byId("mind-palace").hidden) byId("palace-query").focus();
+});
 byId("mobile-chat").addEventListener("click", () => {
   openSettings(false, false);
+  showPalace(false);
   message.focus();
 });
 byId("mobile-sleep").addEventListener("click", () => {

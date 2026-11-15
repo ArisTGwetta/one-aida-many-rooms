@@ -1,3 +1,5 @@
+import { rememberSearchBinding, setupMindPalace } from "./mind-palace.mjs";
+import { projectSkills } from "./project-skills.mjs";
 import { authorize, createMemoryStore, validateConfig } from "./memory.mjs";
 import { createConversationSession, ConversationTransportError, ConversationValidationError } from "./conversation.mjs";
 import { availableSupport, createJournal, dispositionFor, makeJournalEvent } from "./recent-journal.mjs";
@@ -69,6 +71,8 @@ async function setupChat(folderId) {
   const projectStatus = byId("project-save-status");
   let projectPreview;
   let steward;
+  const skills = projectSkills(contextSource, [rememberSearchBinding(store, () => Boolean(token))]);
+  const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills });
   function clearProjectPreview() {
     steward?.cancelPreview(projectPreview);
     projectPreview = undefined;
@@ -139,6 +143,7 @@ async function setupChat(folderId) {
   let sources = [];
   canSend = () => Boolean(session && !pending);
   refreshJournalControls = () => {
+    palace.refresh(running);
     byId("project-confirm").disabled = running || !token || !projectPreview;
     byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
@@ -297,6 +302,7 @@ async function setupChat(folderId) {
 
   function resetChat({ id, turns, entries }) {
     clearProjectPreview();
+    palace.clear();
     conversationId = id;
     conversationField.value = id;
     preceding = undefined;
@@ -313,7 +319,7 @@ async function setupChat(folderId) {
     showSelection();
     session = createConversationSession({
       memoryStore: store,
-      steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: turns })),
+      steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: turns, skills })),
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope) {
