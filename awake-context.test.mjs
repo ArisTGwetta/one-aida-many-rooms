@@ -650,3 +650,36 @@ test("awake source contract distinguishes invalid replies before and after proje
     assert.equal(reads.filter(path => path === "aida-context-project-atlas.json").length, mode === "initial" ? 0 : 1);
   }
 });
+
+test("ordinary Chat constrains awake arguments and diagnoses malformed provider replies", async () => {
+  const { source } = fixture();
+  const invalid = [
+    [[{ name: "Question", value: "fixture" }], "awake_action_argument_name"],
+    [[{ name: "question", value: "   " }], "awake_action_argument_value"],
+    [[{ name: "question", value: "x".repeat(241) }], "awake_action_argument_value"],
+    [[{ name: "question", value: "a" }, { name: "question", value: "b" }], "awake_action_argument_duplicate"]
+  ];
+  let calls = 0;
+  const invoke = createProviders({ apiKey: "fixture", async fetchRequest(_url, options) {
+    const body = JSON.parse(options.body);
+    const envelope = JSON.parse(body.input);
+    const final = body.text.format.schema.properties.result.anyOf[0];
+    const properties = final.properties.awake.properties.action.anyOf[0].properties.arguments.items.properties;
+    assert.ok(!new RegExp(properties.name.pattern).test("Question"));
+    assert.ok(!new RegExp(properties.value.pattern).test("   "));
+    assert.ok(!JSON.stringify(body.text.format.schema).includes('"maxLength":'));
+    assert.match(body.instructions, /ordinary conversation or a clarification, use arguments: \[\]/);
+    const response = answer(envelope);
+    response.awake.action.arguments = invalid[calls++]?.[0] ?? [];
+    return Response.json({ status: "completed", output: [{ type: "message",
+      content: [{ type: "output_text", text: JSON.stringify({ result: response }) }] }] });
+  } });
+  const session = createConversationSession({ steward: createAwakeSteward(source), memoryStore: { recall: async () => null },
+    provider: async envelope => (await invoke({ envelope, provider: "openai", model: openAIModel })).raw });
+  for (const [, code] of invalid) {
+    await assert.rejects(session.send("How is your day?"), error => error.callPhase === "initial" && error.diagnostic === code);
+    assert.equal(session.recentTurnCount, 0);
+  }
+  assert.equal((await session.send("How is your day?")).receipt.outcome.status, "conversation");
+  assert.equal(calls, 5);
+});

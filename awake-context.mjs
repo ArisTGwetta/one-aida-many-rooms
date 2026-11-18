@@ -4,7 +4,8 @@ import { createDriveClient } from "./memory.mjs";
 const layers = ["long", "short", "recent", "facts", "insights"];
 const kinds = ["just_keep_talking", "ask_for_help", "continue_project", "switch_project", "propose_project", "request_capability", "discover_capability"];
 const reasons = ["meaningful_event", "project_change", "correction", "explicit_request", "threshold"];
-const stableId = value => typeof value === "string" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
+const stableIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const stableId = value => typeof value === "string" && stableIdPattern.test(value);
 const bounded = (value, max) => typeof value === "string" && Boolean(value.trim()) && value.length <= max;
 const string = { type: "string" };
 const nullable = { type: ["string", "null"] };
@@ -19,7 +20,10 @@ const optionalSources = ["just_keep_talking", "ask_for_help"];
 const citedKinds = kinds.filter(kind => ![...optionalSources, "propose_project"].includes(kind));
 const actionSchema = (choices, minItems) => object({
   kind: enumeration(...choices), target: nullable,
-  arguments: { ...array(object({ name: string, value: string })), maxItems: 8 },
+  arguments: { ...array(object({
+    name: { ...string, pattern: stableIdPattern.source },
+    value: { ...string, pattern: "\\S" }
+  })), maxItems: 8 },
   sources: { ...sources, minItems, maxItems: 4 }, uncertainty: nullable
 });
 
@@ -39,6 +43,7 @@ export const awakeInstructions = [
   "Use context.lookupProject to answer this turn only. After a completed lookup, use just_keep_talking unless you genuinely need clarification. Keep retrieved material separate from global memory and the active room.",
   "Use continue_project only for an explicitly intended continuation of context.currentProjectId. Set target to that stable ID and cite the current user message.",
   "Every action except just_keep_talking and ask_for_help requires one to four distinct supplied source IDs. Those two may use an empty sources array. Use null for absent target or uncertainty. Use at most eight uniquely named arguments, with stable slug names and nonblank values of at most 240 characters. Non-null target and uncertainty have limits of 120 and 240 characters.",
+  "For ordinary conversation or a clarification, use arguments: []. For an action that needs arguments, use only its named arguments, once each, with nonblank values. Omit unused arguments instead of sending placeholders.",
   "Use stable project and capability IDs. Discovery is a request, never invent a capability.",
   "If the catalog lists ask_uncle_chatt and the user explicitly asks or outside help would be useful, offer a user-reviewed draft via request_capability with the question and current user source. Never claim a draft was copied or sent.",
   "Describe requested external actions as proposals. Never claim a tool ran or an order was placed.",
@@ -290,9 +295,13 @@ export function validateAwake(awake, envelope) {
   if (action.target !== null && !bounded(action.target, 120)) reject("awake_action_target");
   if (action.uncertainty !== null && !bounded(action.uncertainty, 240)) reject("awake_action_uncertainty");
   if (!validSources(action.sources, !optionalSources.includes(action.kind))) reject("awake_action_sources");
-  if (!Array.isArray(action.arguments) || action.arguments.length > 8 ||
-      action.arguments.some(arg => !exact(arg, ["name", "value"]) || !stableId(arg.name) || !bounded(arg.value, 240)) ||
-      new Set(action.arguments.map(arg => arg.name)).size !== action.arguments.length) reject("awake_action_arguments");
+  if (!Array.isArray(action.arguments) || action.arguments.length > 8) reject("awake_action_argument_count");
+  for (const arg of action.arguments) {
+    if (!exact(arg, ["name", "value"])) reject("awake_action_argument_shape");
+    if (!stableId(arg.name)) reject("awake_action_argument_name");
+    if (!bounded(arg.value, 240)) reject("awake_action_argument_value");
+  }
+  if (new Set(action.arguments.map(arg => arg.name)).size !== action.arguments.length) reject("awake_action_argument_duplicate");
   if (awake.rebuild !== null && !reasons.includes(awake.rebuild)) reject("awake_rebuild");
   for (const [group, allowed] of [["changes", ["long", "short", "recent"]], ["candidates", ["facts", "insights"]], ["contradictions", null]]) {
     if (!Array.isArray(awake[group]) || awake[group].length > 6) reject("awake_collection", "Invalid awake collection.");
