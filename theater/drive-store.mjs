@@ -67,7 +67,9 @@ export function theaterStorage(drive) {
         const fileId = existing?.fileId ?? await drive.generateId();
         pending.set(key, { fileId, text });
         await drive.uploadJson(fileId, `theater-${playId}-${operationId}.json`, { theaterNamespace: namespace, playId }, record);
-        if (JSON.stringify(await drive.readJson(fileId)) !== text) throw Error('Theater save readback failed; original snapshot retained. Retry the same save.');
+        const readback = await drive.readJson(fileId);
+        validatePlay(readback?.snapshot);
+        if (JSON.stringify(readback) !== text) throw Error('Theater save readback failed; original snapshot retained. Retry the same save.');
         const verified = await recover(playId);
         if (JSON.stringify(verified) !== text) throw Error('Theater save could not be verified.');
         pending.delete(key);

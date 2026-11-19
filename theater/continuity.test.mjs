@@ -102,3 +102,16 @@ test('failed readback preserves preceding valid snapshot and a retry verifies th
   assert.equal((await store.savePlay(p.playId, 1, p, 'save-2')).revision, 2);
   assert.equal(f.files.size, 2);
 });
+
+test('v1 saved revisions remain readable alongside later v2 play snapshots', async () => {
+  const { upgradePlay, portfolioView } = await import('./continuity.mjs');
+  const f = fixture(); const store = theaterStorage(f.drive); const old = story();
+  await store.savePlay(old.playId, 0, old, 'old-save');
+  assert.equal((await store.loadPlay(old.playId)).snapshot.schema, 'theater-play@1');
+  const updated = upgradePlay(old);
+  await store.savePlay(old.playId, 1, updated, 'new-save');
+  const recovered = await theaterStorage(f.drive).loadPlay(old.playId);
+  assert.equal(recovered.snapshot.schema, 'theater-play@2');
+  assert.deepEqual(portfolioView(recovered.snapshot, 'game').portfolio, old.game);
+  assert.deepEqual(f.files.get('file-1').record.snapshot, old);
+});

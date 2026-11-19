@@ -206,6 +206,8 @@
         <label for="theater-play">Play</label>
         <select id="theater-play"><option value="">Choose or resume a play</option></select>
         <button id="theater-save" type="button">Save play</button>
+        <button id="theater-restore-last" type="button" hidden>Before my last action</button>
+        <button id="theater-restore-previous" type="button" hidden>Before my previous action</button>
         <strong id="theater-unsaved" role="status" hidden>Unsaved changes</strong>
       </div>
       <div id="theater-timeline" role="log" aria-label="Play conversation"></div>
@@ -213,6 +215,7 @@
         <div class="theater-recipient"><span id="theater-recipient-portrait" class="theater-portrait"></span><strong id="theater-recipient-label">Recipient: Aida · META / Backstage</strong></div>
         <label for="theater-scope">Audience</label>
         <select id="theater-scope"><option value="meta">META · Backstage</option><option value="game">GAME · Onstage</option></select>
+        <label><input id="theater-player-action" type="checkbox" disabled> Begin a new player-action turn (GAME only)</label>
         <label for="theater-text">Message · Francisco</label>
         <div class="theater-send-row"><textarea id="theater-text" rows="2" maxlength="2000"></textarea>
           <button id="theater-add" type="button">Send to META</button></div>

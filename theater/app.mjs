@@ -1,5 +1,6 @@
+import { playerAction, proposeRestore, commitRestore } from './restore.mjs';
 import { plays, finishVisit } from './contracts.mjs';
-import { emptyPlay, appendEvent, setEntry, portfolioView } from './continuity.mjs';
+import { emptyPlay, appendEvent, setEntry, portfolioView, upgradePlay } from './continuity.mjs';
 export function setupTheater({ registry, storage }) {
   const el = id => document.getElementById(id);
   const button = el('theater-open');
@@ -13,6 +14,13 @@ export function setupTheater({ registry, storage }) {
     option.value = item.id; option.textContent = item.title; el('theater-play').append(option);
   }
   function render() {
+    const checkpoints = play?.checkpoints ?? [];
+    for (const [id, offset] of [['theater-restore-last', 1], ['theater-restore-previous', 2]]) {
+      el(id).hidden = checkpoints.length < offset;
+      el(id).disabled = busy || Boolean(pending);
+    }
+    el('theater-player-action').disabled = busy || el('theater-scope').value !== 'game' || Boolean(pending);
+    el('theater-save').textContent = pending?.kind === 'restore' ? 'Retry restore' : 'Save play';
     const gameAudience = el('theater-scope').value === 'game';
     const recipient = el('theater-recipient-portrait');
     recipient.replaceChildren();
@@ -33,11 +41,11 @@ export function setupTheater({ registry, storage }) {
     const timeline = el('theater-timeline');
     const following = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 40;
     timeline.replaceChildren();
-    for (const event of play?.events ?? []) {
+    for (const event of play ? portfolioView(play, 'meta').events : []) {
       const item = document.createElement('article');
       item.dataset.audience = event.scope;
       const label = document.createElement('strong');
-      label.textContent = 'Francisco · submitted by user · ' + (event.scope === 'game' ? 'GAME / Onstage' : 'META / Backstage');
+      label.textContent = 'Francisco · submitted by user · ' + (event.scope === 'game' ? 'GAME / Onstage · ' + event.branchStatus : 'META / Backstage');
       const text = document.createElement('p');
       text.textContent = event.text;
       const portrait = document.createElement('span');
@@ -73,7 +81,7 @@ export function setupTheater({ registry, storage }) {
   async function recover() {
     const saved = await storage.loadPlay(entry.playId);
     if (!saved && revision > 0) throw Error('Expected Theater snapshots are missing; retained state was not reset.');
-    const next = saved?.snapshot ?? emptyPlay(entry.playId);
+    const next = upgradePlay(saved?.snapshot ?? emptyPlay(entry.playId));
     play = next; revision = saved?.revision ?? 0;
     resumeRef = saved ? `theater:${entry.playId}:${revision}` : null;
     pending = undefined;
@@ -92,7 +100,11 @@ export function setupTheater({ registry, storage }) {
     await recover();
   }));
   el('theater-add').addEventListener('click', () => task(async () => {
-    play = appendEvent(play, el('theater-scope').value, el('theater-text').value);
+    const beginsTurn = el('theater-scope').value === 'game' && el('theater-player-action').checked;
+    const current = upgradePlay(play);
+    play = beginsTurn ? playerAction(current, el('theater-text').value) :
+      appendEvent(current, el('theater-scope').value, el('theater-text').value);
+    if (beginsTurn) el('theater-player-action').checked = false;
     dirty = true;
     el('theater-text').value = ''; status('Source event added locally. Save explicitly to retain it.');
   }));
@@ -106,11 +118,26 @@ export function setupTheater({ registry, storage }) {
   el('theater-scope').addEventListener('change', render);
   el('theater-save').addEventListener('click', () => task(async () => {
     pending ??= { operationId: crypto.randomUUID(), snapshot: structuredClone(play), revision };
-    const saved = await storage.savePlay(entry.playId, pending.revision, pending.snapshot, pending.operationId);
+    const saved = pending.kind === 'restore' ? await commitRestore(storage, entry.playId, pending) :
+      await storage.savePlay(entry.playId, pending.revision, pending.snapshot, pending.operationId);
     play = saved.snapshot; revision = saved.revision; resumeRef = `theater:${entry.playId}:${revision}`;
     dirty = false;
     pending = undefined; status(`Saved and verified Theater revision ${revision}.`);
   }));
+  async function restore(offset) {
+    if (pending) throw Error('Retry or recover the pending operation first.');
+    const checkpoint = play?.checkpoints?.at(-offset);
+    if (!checkpoint) throw Error('Restore point unavailable.');
+    if (!confirm('Restore before this action and save the selected story branch to Drive?')) return;
+    pending = proposeRestore(play, checkpoint.id, revision);
+    const saved = await commitRestore(storage, entry.playId, pending);
+    play = saved.snapshot; revision = saved.revision;
+    resumeRef = 'theater:' + entry.playId + ':' + revision;
+    pending = undefined; dirty = false;
+    status('Restored and verified Theater revision ' + revision + '.');
+  }
+  el('theater-restore-last').addEventListener('click', () => task(() => restore(1)));
+  el('theater-restore-previous').addEventListener('click', () => task(() => restore(2)));
   function receipt() {
     if (busy) return;
     const receipt = entry?.playId ? finishVisit(entry, visitId, resumeRef) : null;

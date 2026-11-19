@@ -161,3 +161,55 @@ test('timeline names audiences; unsaved indicator survives navigation and failed
     assert.match(node('theater-status').textContent, /Saved and verified/);
   } finally { globalThis.document = previous; }
 });
+
+test('explicit player boundary preserves failed-send draft and restore is invisible until verified save', async () => {
+  const nodes = new Map();
+  const make = () => ({ dataset: {}, value: '', textContent: '', checked: false, children: [], handlers: {},
+    append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; },
+    setAttribute() {}, addEventListener(type, fn) { this.handlers[type] = fn; },
+    dispatchEvent(event) { this.handlers[event.type]?.(event); } });
+  const node = id => { if (!nodes.has(id)) nodes.set(id, make()); return nodes.get(id); };
+  const previousDocument = globalThis.document, previousConfirm = globalThis.confirm;
+  globalThis.document = { getElementById: node, createElement: make }; globalThis.confirm = () => true;
+  try {
+    node('theater-scope').value = 'game'; node('theater-portfolio').value = 'game';
+    let fail = true; const writes = [];
+    setupTheater({ registry: createSkillRegistry([rpgBinding()]), storage: {
+      loadPlay: async () => null,
+      savePlay: async (id, revision, snapshot, operationId) => {
+        writes.push(structuredClone({ id, revision, snapshot, operationId }));
+        if (fail) throw Error('Readback failed');
+        return { snapshot, revision: revision + 1 };
+      }
+    } });
+    await node('theater-open').handlers.click();
+    node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
+    assert.equal(node('theater-restore-last').hidden, true);
+    node('theater-player-action').checked = true;
+    node('theater-text').value = '   '; await node('theater-add').handlers.click();
+    assert.equal(node('theater-text').value, '   ');
+    assert.equal(node('theater-player-action').checked, true);
+    assert.equal(node('theater-scope').value, 'game');
+    assert.equal(node('theater-restore-last').hidden, true);
+    node('theater-text').value = 'Enter the lair'; await node('theater-add').handlers.click();
+    assert.equal(node('theater-player-action').checked, false);
+    assert.equal(node('theater-restore-last').hidden, false);
+    assert.equal(node('theater-restore-previous').hidden, true);
+    node('theater-text').value = 'Caught'; await node('theater-add').handlers.click();
+    node('theater-text').value = 'Draft after consequences';
+    const before = node('theater-data').textContent;
+    await node('theater-restore-last').handlers.click();
+    assert.equal(node('theater-data').textContent, before);
+    assert.equal(node('theater-text').value, 'Draft after consequences');
+    assert.equal(node('theater-save').textContent, 'Retry restore');
+    assert.equal(node('theater-add').disabled, true);
+    assert.match(node('theater-status').textContent, /Readback failed/);
+    fail = false; await node('theater-save').handlers.click();
+    assert.deepEqual(writes[0], writes[1]);
+    assert.equal(node('theater-restore-last').hidden, true);
+    assert.equal(JSON.parse(node('theater-data').textContent).events.length, 0);
+    assert.equal(node('theater-unsaved').hidden, true);
+    const labels = node('theater-timeline').children.map(x => x.children[1].children[0].textContent);
+    assert.ok(labels.every(label => label.includes('discarded')));
+  } finally { globalThis.document = previousDocument; globalThis.confirm = previousConfirm; }
+});
