@@ -6,6 +6,7 @@
   <title>Aida · First Memory</title>
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./mobile-view.css">
+  <link rel="stylesheet" href="./theater/theater.css">
   <script type="module" src="./app.mjs"></script>
   <script type="module" src="./mobile-view.mjs"></script>
 </head>
@@ -198,27 +199,37 @@
       <p id="glasses-metadata"></p>
       <p id="glasses-status" role="status">No image selected.</p>
     </section>
-    <section id="theater-room" style="grid-column: 1 / -1; grid-row: 4; min-height: 0; overflow: auto; padding: .65rem" hidden aria-labelledby="theater-title">
-      <h2 id="theater-title" tabindex="-1">RPG Theater</h2>
-      <label for="theater-play">Play</label>
-      <select id="theater-play"><option value="">Choose or resume a play</option></select>
-      <button id="theater-recover" type="button">Recover saved play</button>
-      <label for="theater-scope">Source audience</label>
-      <select id="theater-scope"><option value="meta">Private META</option><option value="game">Validated in-world event</option></select>
-      <label for="theater-text">Play source event</label><textarea id="theater-text" maxlength="2000"></textarea>
-      <button id="theater-add" type="button">Add source event</button>
-      <label for="theater-portfolio">Portfolio</label>
-      <select id="theater-portfolio"><option value="meta">META</option><option value="game">GAME</option></select>
-      <label for="theater-layer">Memory section</label>
-      <select id="theater-layer"><option value="short">SHORT</option><option value="long">LONG</option><option value="recent">RECENT</option></select>
-      <label for="theater-entry-text">Source-supported entry</label><textarea id="theater-entry-text" maxlength="2000"></textarea>
-      <label for="theater-sources">Source IDs (comma separated)</label><input id="theater-sources">
-      <button id="theater-entry-add" type="button">Add portfolio entry</button>
-      <button id="theater-save" type="button">Save / retry save</button>
+    <section id="theater-room" hidden aria-labelledby="theater-title">
+      <header class="theater-heading"><h2 id="theater-title" tabindex="-1">RPG Theater</h2>
+        <button id="theater-return" type="button">Return to Aida</button></header>
+      <div class="theater-toolbar">
+        <label for="theater-play">Play</label>
+        <select id="theater-play"><option value="">Choose or resume a play</option></select>
+        <button id="theater-save" type="button">Save play</button>
+        <strong id="theater-unsaved" role="status" hidden>Unsaved changes</strong>
+      </div>
+      <div id="theater-timeline" role="log" aria-label="Play conversation"></div>
+      <div class="theater-composer">
+        <div class="theater-recipient"><span id="theater-recipient-portrait" class="theater-portrait"></span><strong id="theater-recipient-label">Recipient: Aida · META / Backstage</strong></div>
+        <label for="theater-scope">Audience</label>
+        <select id="theater-scope"><option value="meta">META · Backstage</option><option value="game">GAME · Onstage</option></select>
+        <label for="theater-text">Message · Francisco</label>
+        <div class="theater-send-row"><textarea id="theater-text" rows="2" maxlength="2000"></textarea>
+          <button id="theater-add" type="button">Send to META</button></div>
+      </div>
       <p id="theater-status" role="status"></p>
-      <details><summary>Portfolio and source evidence</summary><pre id="theater-data"></pre></details>
-      <details><summary>Last exit receipt</summary><pre id="theater-receipt"></pre></details>
-      <button id="theater-return" type="button">Return to Aida</button>
+      <details class="theater-backstage"><summary>Backstage / Development</summary>
+        <button id="theater-recover" type="button">Recover saved play</button>
+        <label for="theater-portfolio">Portfolio</label>
+        <select id="theater-portfolio"><option value="meta">META</option><option value="game">GAME</option></select>
+        <label for="theater-layer">Memory section</label>
+        <select id="theater-layer"><option value="short">SHORT</option><option value="long">LONG</option><option value="recent">RECENT</option></select>
+        <label for="theater-entry-text">Source-supported entry</label><textarea id="theater-entry-text" maxlength="2000"></textarea>
+        <label for="theater-sources">Source IDs (comma separated)</label><input id="theater-sources">
+        <button id="theater-entry-add" type="button">Add portfolio entry</button>
+        <pre id="theater-data"></pre>
+        <details><summary>Last exit receipt</summary><pre id="theater-receipt"></pre></details>
+      </details>
     </section>
     <div class="mobile-lower">
       <div id="aida-visual" aria-label="Aida’s visual display"></div>

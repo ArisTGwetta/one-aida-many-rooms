@@ -32,12 +32,12 @@ test('room navigation selects and recovers a play without host conversation acce
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, { dataset: {}, value: '', textContent: '', children: [], handlers: {},
-      append(child) { this.children.push(child); }, addEventListener(type, fn) { this.handlers[type] = fn; },
+      append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; }, addEventListener(type, fn) { this.handlers[type] = fn; },
       dispatchEvent(event) { this.handlers[event.type]?.(event); } });
     return elements.get(id);
   };
   const previous = globalThis.document;
-  globalThis.document = { getElementById: element, createElement: () => ({}) };
+  globalThis.document = { getElementById: element, createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
   try {
     element('message').value = 'Unsent everyday draft';
     element('theater-portfolio').value = 'meta';
@@ -104,4 +104,60 @@ test('actual room navigation leaves Theater for Chat Library Glasses and restore
   assert.equal(receipts, 2);
   // The unchanged Glasses handler goes through showPalace before opening its panel.
   assert.match(source, /const previous = byId\("mind-palace"\)\.hidden \? "chat" : "library";\s+showPalace\(false\);/);
+});
+
+test('timeline names audiences; unsaved indicator survives navigation and failed save until verified success', async () => {
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { dataset: {}, value: '', textContent: '', children: [], handlers: {},
+      scrollHeight: 500, scrollTop: 400, clientHeight: 100,
+      append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; },
+      addEventListener(type, fn) { this.handlers[type] = fn; }, dispatchEvent(e) { this.handlers[e.type]?.(e); } });
+    return nodes.get(id);
+  };
+  const previous = globalThis.document;
+  globalThis.document = { getElementById: node, createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
+  try {
+    node('theater-portfolio').value = 'meta'; node('theater-scope').value = 'meta';
+    node('message').value = 'Everyday draft';
+    let fail = true, writes = 0;
+    setupTheater({ registry: createSkillRegistry([rpgBinding()]), storage: {
+      loadPlay: async () => null,
+      savePlay: async (_id, revision, snapshot) => {
+        writes++; if (fail) throw Error('Readback failed');
+        return { snapshot, revision: revision + 1 };
+      }
+    } });
+    await node('theater-open').handlers.click();
+    node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
+    assert.equal(node('theater-add').textContent, 'Send to META');
+    node('theater-text').value = 'Private example'; await node('theater-add').handlers.click();
+    assert.equal(node('theater-unsaved').hidden, false);
+    assert.equal(writes, 0);
+    node('theater-scope').value = 'game'; node('theater-scope').handlers.change();
+    assert.equal(node('theater-add').textContent, 'Send to GAME');
+    assert.match(node('theater-recipient-label').textContent, /Stage.*ensemble/);
+    assert.equal(node('theater-recipient-portrait').children.length, 1);
+    node('theater-text').value = 'Visible example'; await node('theater-add').handlers.click();
+    const messages = node('theater-timeline').children;
+    assert.equal(messages.length, 2);
+    assert.match(messages[0].children[1].children[0].textContent, /Francisco.*META \/ Backstage/);
+    assert.match(messages[1].children[1].children[0].textContent, /Francisco.*GAME \/ Onstage/);
+    assert.equal(messages[0].children[1].children[1].textContent, 'Private example');
+    node('theater-text').value = 'Unsent Theater draft';
+    node('theater-room').dispatchEvent(new CustomEvent('theater-leave'));
+    await node('theater-open').handlers.click();
+    assert.equal(node('theater-text').value, 'Unsent Theater draft');
+    assert.equal(node('message').value, 'Everyday draft');
+    assert.equal(node('theater-unsaved').hidden, false);
+    assert.equal(node('theater-play').disabled, true);
+    assert.equal(node('theater-recover').disabled, true);
+    await node('theater-save').handlers.click();
+    assert.equal(node('theater-unsaved').hidden, false);
+    assert.match(node('theater-status').textContent, /Readback failed/);
+    fail = false; await node('theater-save').handlers.click();
+    assert.equal(node('theater-unsaved').hidden, true);
+    assert.equal(writes, 2);
+    assert.match(node('theater-status').textContent, /Saved and verified/);
+  } finally { globalThis.document = previous; }
 });
