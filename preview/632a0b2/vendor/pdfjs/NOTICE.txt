@@ -1,0 +1,1 @@
+PDF.js 5.7.284, legacy browser renderer and worker. Source: https://www.npmjs.com/package/pdfjs-dist/v/5.7.284
