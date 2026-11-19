@@ -198,6 +198,28 @@
       <p id="glasses-metadata"></p>
       <p id="glasses-status" role="status">No image selected.</p>
     </section>
+    <section id="theater-room" style="grid-column: 1 / -1; grid-row: 4; min-height: 0; overflow: auto; padding: .65rem" hidden aria-labelledby="theater-title">
+      <h2 id="theater-title" tabindex="-1">RPG Theater</h2>
+      <label for="theater-play">Play</label>
+      <select id="theater-play"><option value="">Choose or resume a play</option></select>
+      <button id="theater-recover" type="button">Recover saved play</button>
+      <label for="theater-scope">Source audience</label>
+      <select id="theater-scope"><option value="meta">Private META</option><option value="game">Validated in-world event</option></select>
+      <label for="theater-text">Play source event</label><textarea id="theater-text" maxlength="2000"></textarea>
+      <button id="theater-add" type="button">Add source event</button>
+      <label for="theater-portfolio">Portfolio</label>
+      <select id="theater-portfolio"><option value="meta">META</option><option value="game">GAME</option></select>
+      <label for="theater-layer">Memory section</label>
+      <select id="theater-layer"><option value="short">SHORT</option><option value="long">LONG</option><option value="recent">RECENT</option></select>
+      <label for="theater-entry-text">Source-supported entry</label><textarea id="theater-entry-text" maxlength="2000"></textarea>
+      <label for="theater-sources">Source IDs (comma separated)</label><input id="theater-sources">
+      <button id="theater-entry-add" type="button">Add portfolio entry</button>
+      <button id="theater-save" type="button">Save / retry save</button>
+      <p id="theater-status" role="status"></p>
+      <details><summary>Portfolio and source evidence</summary><pre id="theater-data"></pre></details>
+      <details><summary>Last exit receipt</summary><pre id="theater-receipt"></pre></details>
+      <button id="theater-return" type="button">Return to Aida</button>
+    </section>
     <div class="mobile-lower">
       <div id="aida-visual" aria-label="Aida’s visual display"></div>
       <div id="mobile-compose">
@@ -260,13 +282,6 @@
       <button id="chatt-discard" type="button">Discard</button>
     </div>
     <p id="chatt-status" role="status"></p>
-  </dialog>
-  <dialog id="theater-doorway" aria-labelledby="theater-title">
-    <h2 id="theater-title">RPG Theater</h2>
-    <label for="theater-play">Play</label>
-    <select id="theater-play"><option value="">Choose a play</option></select>
-    <p id="theater-status" role="status"></p>
-    <button id="theater-return" type="button">Return to Aida</button>
   </dialog>
 </body>
 </html>

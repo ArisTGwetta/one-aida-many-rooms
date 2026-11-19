@@ -85,7 +85,7 @@ async function setupChat(folderId) {
     uncleChattBinding(() => Boolean(token)), rpgBinding(),
     snailMiniBinding({ getCatalog: createSnailDriveReader(folderId, () => token),
       authorized: () => Boolean(token), cacheKey: () => token })]);
-  setupTheater({ registry: skills });
+  setupTheater({ registry: skills, storage: createTheaterStorage(folderId, () => token) });
   const chatt = setupUncleChatt({ registry: skills, contextSource, run, recent: () => session?.recentForHandoff() ?? [] });
   const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills, async suggest(workspace) {
     providerCalls = [];
@@ -648,3 +648,5 @@ recall.addEventListener("click", () => run("Reading from Google Drive…", async
 }));
 import { rpgBinding } from "./theater/capability.mjs";
 import { setupTheater } from "./theater/app.mjs";
+
+import { createTheaterStorage } from "./theater/drive-store.mjs";

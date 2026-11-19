@@ -28,31 +28,37 @@ test('exit permits only an attributed synthetic receipt and no memory or transcr
   assert.equal(validReceipt({ ...receipt, resumeRef: 'foreign-record' }), false);
   assert.throws(() => finishVisit({ ...entry, playId: null }, 'visit-1'));
 });
-test('opening, choosing and returning uses empty host context and preserves everyday draft', async () => {
+test('room navigation selects and recovers a play without host conversation access', async () => {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, { dataset: {}, value: '', textContent: '', children: [], handlers: {},
       append(child) { this.children.push(child); }, addEventListener(type, fn) { this.handlers[type] = fn; },
-      showModal() { this.open = true; }, close() { this.open = false; } });
+      dispatchEvent(event) { this.handlers[event.type]?.(event); } });
     return elements.get(id);
   };
   const previous = globalThis.document;
   globalThis.document = { getElementById: element, createElement: () => ({}) };
   try {
     element('message').value = 'Unsent everyday draft';
+    element('theater-portfolio').value = 'meta';
+    let entered = 0, exited = 0;
+    element('theater-room').addEventListener('theater-enter', () => entered++);
+    element('theater-room').addEventListener('theater-exit', () => {
+      exited++; element('theater-room').dispatchEvent(new CustomEvent('theater-leave'));
+    });
     const requests = [];
     const registry = createSkillRegistry([rpgBinding()]);
     setupTheater({ registry: { async dispatch(request, context, phase) {
       requests.push(structuredClone({ request, context, phase }));
       return registry.dispatch(request, context, phase);
-    } } });
+    } }, storage: { loadPlay: async () => null } });
     await element('theater-open').handlers.click();
-    assert.equal(element('theater-doorway').open, true);
+    assert.equal(entered, 1);
     element('theater-play').value = 'doorway-demo';
     await element('theater-play').handlers.change();
     element('theater-return').handlers.click();
-    assert.equal(element('theater-doorway').open, false);
-    assert.equal(validReceipt(JSON.parse(element('theater-status').textContent)), true);
+    assert.equal(exited, 1);
+    assert.equal(validReceipt(JSON.parse(element('theater-receipt').textContent)), true);
     assert.equal(element('message').value, 'Unsent everyday draft');
     assert.equal(requests.length, 2);
     assert.ok(requests.every(request => Object.keys(request.context).length === 0));
@@ -63,4 +69,39 @@ test('Theater modules have no provider, persistence or everyday memory dependenc
     const source = readFileSync(new URL(name, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /fetch\(|localStorage|sessionStorage|indexedDB|\.\/memory|\.\/providers|\.\/sleep|\.\/conversation/);
   }
+});
+
+test('actual room navigation leaves Theater for Chat Library Glasses and restores composer visibility', async () => {
+  const { runInNewContext } = await import('node:vm');
+  const source = readFileSync(new URL('../mobile-view.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('function leaveTheater()');
+  const end = source.indexOf('byId("mobile-palace").addEventListener', start);
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { hidden: true, handlers: {}, attrs: {},
+      addEventListener(type, fn) { this.handlers[type] = fn; },
+      dispatchEvent(e) { this.handlers[e.type]?.(e); },
+      setAttribute(key, value) { this.attrs[key] = value; }, focus() {} });
+    return nodes.get(id);
+  };
+  let receipts = 0;
+  node('theater-room').addEventListener('theater-leave', () => receipts++);
+  const context = { byId: node, CustomEvent, openSettings() {}, message: { focus() {} },
+    room: { classList: { add() {}, toggle() {} } }, matchMedia: () => ({ matches: true }) };
+  runInNewContext(source.slice(start, end), context);
+  node('theater-room').dispatchEvent(new CustomEvent('theater-enter'));
+  assert.equal(node('theater-room').hidden, false);
+  assert.equal(node('mobile-compose').hidden, true);
+  context.showPalace(true);
+  assert.equal(node('theater-room').hidden, true);
+  assert.equal(node('mind-palace').hidden, false);
+  assert.equal(node('mobile-compose').hidden, false);
+  assert.equal(receipts, 1);
+  node('theater-room').dispatchEvent(new CustomEvent('theater-enter'));
+  node('theater-room').dispatchEvent(new CustomEvent('theater-exit'));
+  assert.equal(node('theater-room').hidden, true);
+  assert.equal(node('mind-palace').hidden, true);
+  assert.equal(receipts, 2);
+  // The unchanged Glasses handler goes through showPalace before opening its panel.
+  assert.match(source, /const previous = byId\("mind-palace"\)\.hidden \? "chat" : "library";\s+showPalace\(false\);/);
 });

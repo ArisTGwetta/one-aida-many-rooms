@@ -11,12 +11,13 @@ export function validReceipt(value) {
   return Boolean(exact(value, ['schema', 'source', 'playId', 'visitId', 'orientation', 'resumeRef']) &&
     value.schema === 'theater-visit-receipt@1' && value.source === 'rpg@1' &&
     plays.some(play => play.id === value.playId) && id(value.visitId) &&
-    value.orientation === 'Synthetic doorway visit; no story was played.' && value.resumeRef === null);
+    value.orientation === 'Demonstration play continuity visit.' &&
+    (value.resumeRef === null || /^theater:doorway-demo:[1-9][0-9]{0,5}$/.test(value.resumeRef)));
 }
-export function finishVisit(entry, visitId) {
+export function finishVisit(entry, visitId, resumeRef = null) {
   if (!validEntry(entry) || entry.playId === null) throw new Error('Select a valid demonstration play.');
   const receipt = { schema: 'theater-visit-receipt@1', source: 'rpg@1', playId: entry.playId,
-    visitId, orientation: 'Synthetic doorway visit; no story was played.', resumeRef: null };
+    visitId, orientation: 'Demonstration play continuity visit.', resumeRef };
   if (!validReceipt(receipt)) throw new Error('Invalid Theater receipt.');
   return receipt;
 }

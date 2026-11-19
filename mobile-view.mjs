@@ -75,7 +75,29 @@ byId("open-mobile").addEventListener("click", () => switchView(true));
 byId("close-mobile").addEventListener("click", () => switchView(false));
 menu.addEventListener("click", () => openSettings(settings.hidden));
 byId("close-mobile-settings").addEventListener("click", () => openSettings(false));
+function leaveTheater() {
+  const panel = byId("theater-room");
+  if (panel.hidden) return;
+  panel.dispatchEvent(new CustomEvent("theater-leave"));
+  panel.hidden = true;
+  byId("mobile-compose").hidden = false;
+  byId("theater-open").setAttribute("aria-expanded", "false");
+}
+byId("theater-room").addEventListener("theater-enter", () => {
+  openSettings(false, false);
+  showPalace(false);
+  byId("theater-room").hidden = false;
+  byId("mobile-compose").hidden = true;
+  room.classList.add("workspace-room");
+  byId("theater-open").setAttribute("aria-expanded", "true");
+  byId("theater-title").focus();
+});
+byId("theater-room").addEventListener("theater-exit", () => {
+  showPalace(false);
+  message.focus();
+});
 function showPalace(open) {
+  leaveTheater();
   byId("glasses").hidden = true;
   byId("mobile-glasses").setAttribute("aria-expanded", "false");
   byId("mind-palace").hidden = !open;
