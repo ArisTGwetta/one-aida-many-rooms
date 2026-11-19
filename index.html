@@ -209,6 +209,7 @@
       </div>
     </div>
     <nav aria-label="Mobile controls">
+      <button id="theater-open" type="button" disabled>Theater</button>
       <button id="mobile-sleep" type="button">Sleep</button>
       <button id="mobile-chat" type="button">Chat</button>
       <button id="mobile-palace" type="button" aria-controls="mind-palace" aria-expanded="false">Library</button>
@@ -259,6 +260,13 @@
       <button id="chatt-discard" type="button">Discard</button>
     </div>
     <p id="chatt-status" role="status"></p>
+  </dialog>
+  <dialog id="theater-doorway" aria-labelledby="theater-title">
+    <h2 id="theater-title">RPG Theater</h2>
+    <label for="theater-play">Play</label>
+    <select id="theater-play"><option value="">Choose a play</option></select>
+    <p id="theater-status" role="status"></p>
+    <button id="theater-return" type="button">Return to Aida</button>
   </dialog>
 </body>
 </html>

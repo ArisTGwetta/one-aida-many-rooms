@@ -82,9 +82,10 @@ async function setupChat(folderId) {
   const glasses = setupGlasses({ contextSource, activeProjectId: () => steward?.activeProjectId ?? null,
     authorized: () => Boolean(token), run });
   const skills = projectSkills(contextSource, [rememberSearchBinding(store, () => Boolean(token)),
-    uncleChattBinding(() => Boolean(token)),
+    uncleChattBinding(() => Boolean(token)), rpgBinding(),
     snailMiniBinding({ getCatalog: createSnailDriveReader(folderId, () => token),
       authorized: () => Boolean(token), cacheKey: () => token })]);
+  setupTheater({ registry: skills });
   const chatt = setupUncleChatt({ registry: skills, contextSource, run, recent: () => session?.recentForHandoff() ?? [] });
   const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills, async suggest(workspace) {
     providerCalls = [];
@@ -645,3 +646,5 @@ recall.addEventListener("click", () => run("Reading from Google Drive…", async
   show(result);
   return "Memory recalled from Google Drive.";
 }));
+import { rpgBinding } from "./theater/capability.mjs";
+import { setupTheater } from "./theater/app.mjs";
