@@ -81,3 +81,23 @@ test('reports remain isolated after two-turn rewind, verified Drive save and fre
   const meta = buildMemoryReport(saved.snapshot, 'meta', metadata);
   assert.match(meta, /private backstage secret/); assert.match(meta, /Branch status: discarded/);
 });
+
+test('v3 reports attribute accepted character dialogue and preserve active GAME isolation after rewind', async () => {
+  const { createCharacterRehearsal } = await import('./characters.mjs');
+  let p = appendEvent(emptyPlay('doorway-demo'), 'meta', 'PRIVATE synthetic backstage detail.', 'private');
+  p = playerAction(p, 'A visitor approaches in dim light.', 'visible', 'before-visitor');
+  const session = createCharacterRehearsal();
+  const info = { playSchema: p.schema, verifiedRevision: 5, unsavedChanges: false, pendingRestore: false };
+  session.update(portfolioView(p, 'game'), info); session.approve([{ sourceId: 'visible', excerpt: 'A visitor approaches in dim light.' }]);
+  const packet = await session.prepare(); session.validateReply({ schema: 'theater-character-reply@1', characterId: 'rias',
+    attemptId: packet.attemptId, fingerprint: packet.fingerprint, dialogue: 'Rias asks who is there.' });
+  const accepted = await session.accept(p, info);
+  const game = buildMemoryReport(accepted, 'game', { ...state, unsavedChanges: true });
+  assert.match(game, /theater-play@3/); assert.match(game, /Speaker: Rias.*accepted by Francisco/);
+  assert.match(game, /Provider\/model identity: unverified/); assert.match(game, new RegExp(packet.attemptId));
+  assert.match(game, /Unsaved changes: YES/); assert.doesNotMatch(game, /PRIVATE synthetic/);
+  const restored = proposeRestore(accepted, 'before-visitor', 5, 'restore-character').snapshot;
+  assert.doesNotMatch(buildMemoryReport(restored, 'game', state), /Rias asks|Speaker: Rias/);
+  const meta = buildMemoryReport(restored, 'meta', state);
+  assert.match(meta, /Branch status: discarded/); assert.match(meta, /Speaker: Rias/);
+});

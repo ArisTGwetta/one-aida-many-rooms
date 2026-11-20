@@ -363,7 +363,7 @@ test('Rias UI requires explicit approval, copies only approved excerpts and neve
     const byId = id => panel.children.find(child => child.id === id);
     const [sourceView, selectionView, packetView, proposalView] = panel.children.filter(child => child.tagName === 'pre');
     assert.ok(panel); assert.equal(find('Prepare Rias packet').disabled, true);
-    assert.ok(!panel.children.some(child => child.tagName === 'button' && /accept/i.test(child.textContent)));
+    assert.equal(find('Accept Rias reply into GAME').disabled, true);
     await node('theater-open').handlers.click(); node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
     node('theater-text').value = 'Private synthetic backstage secret.'; await node('theater-add').handlers.click();
     node('theater-scope').value = 'game'; node('theater-scope').handlers.change();
@@ -407,4 +407,59 @@ test('Rias UI requires explicit approval, copies only approved excerpts and neve
     if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
     else delete globalThis.navigator;
   }
+});
+
+test('accept UI adds one unsaved Rias event, consumes the attempt and preserves it on save conflict', async () => {
+  const nodes = new Map();
+  const make = tagName => ({ tagName, dataset: {}, value: '', textContent: '', children: [], handlers: {},
+    append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; },
+    setAttribute() {}, addEventListener(type, fn) { this.handlers[type] = fn; }, dispatchEvent(event) { this.handlers[event.type]?.(event); } });
+  const node = id => { if (!nodes.has(id)) nodes.set(id, make('node')); return nodes.get(id); };
+  const originalDocument = globalThis.document; globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: make };
+  try {
+    node('theater-scope').value = 'game'; node('theater-portfolio').value = 'game';
+    let writes = 0, conflict = true;
+    setupTheater({ registry: createSkillRegistry([rpgBinding()]), storage: {
+      loadPlay: async () => null,
+      savePlay: async (_id, revision, snapshot) => {
+        writes++; if (conflict) throw Error('Theater changed on another device; recover before saving.');
+        return { snapshot, revision: revision + 1 };
+      }
+    } });
+    const panel = node('backstage').children.find(child => child.children.some(item => item.textContent === 'Rias · supervised reply rehearsal'));
+    const find = label => panel.children.find(child => child.textContent === label);
+    const byId = id => panel.children.find(child => child.id === id);
+    const pre = panel.children.filter(child => child.tagName === 'pre');
+    await node('theater-open').handlers.click(); node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
+    node('theater-player-action').checked = true; node('theater-text').value = 'An unidentified figure approaches.';
+    await node('theater-add').handlers.click();
+    byId('theater-character-excerpt').value = 'An unidentified figure approaches.';
+    await find('Select visible excerpt').handlers.click(); await find('Approve selected excerpts for Rias').handlers.click();
+    await find('Prepare Rias packet').handlers.click(); const packet = JSON.parse(pre[2].textContent);
+    const envelope = { schema: 'theater-character-reply@1', characterId: 'rias', attemptId: packet.attemptId,
+      fingerprint: packet.fingerprint, dialogue: 'Rias asks, “Who is there?”' };
+    byId('theater-character-reply').value = JSON.stringify(envelope);
+    assert.equal(find('Accept Rias reply into GAME').disabled, true);
+    await find('Show proposed Rias reply').handlers.click();
+    assert.equal(find('Accept Rias reply into GAME').disabled, false);
+    node('theater-text').value = 'Unsent Theater draft'; node('message').value = 'Everyday draft';
+    await find('Accept Rias reply into GAME').handlers.click();
+    assert.match(node('theater-status').textContent, /accepted locally.*unsaved/);
+    const accepted = JSON.parse(node('theater-data').textContent);
+    assert.equal(accepted.events.length, 2); assert.equal(accepted.events.at(-1).speaker.id, 'rias');
+    assert.equal(node('theater-restore-last').hidden, false); assert.equal(node('theater-restore-previous').hidden, true);
+    assert.equal(node('theater-unsaved').hidden, false); assert.equal(writes, 0);
+    const label = node('theater-timeline').children.at(-1).children[1].children[0].textContent;
+    assert.match(label, /^Rias.*accepted by Francisco/);
+    assert.equal(find('Accept Rias reply into GAME').disabled, true);
+    await find('Accept Rias reply into GAME').handlers.click();
+    assert.equal(JSON.parse(node('theater-data').textContent).events.length, 2);
+    await node('theater-save').handlers.click();
+    assert.match(node('theater-status').textContent, /another device/);
+    assert.deepEqual(JSON.parse(node('theater-data').textContent), accepted);
+    assert.equal(node('theater-unsaved').hidden, false);
+    assert.equal(node('theater-text').value, 'Unsent Theater draft'); assert.equal(node('message').value, 'Everyday draft');
+    conflict = false; await node('theater-save').handlers.click();
+    assert.equal(node('theater-unsaved').hidden, true); assert.match(node('theater-status').textContent, /Saved and verified/);
+  } finally { globalThis.document = originalDocument; }
 });

@@ -104,3 +104,38 @@ test('verified restore persistence, failure retry, reload and stale revision kee
   const wrongPlay = { ...pending, snapshot: { ...pending.snapshot, playId: 'foreign' } };
   await assert.rejects(commitRestore(store, 'doorway-demo', wrongPlay));
 });
+
+test('v3 accepted replies persist with provenance and one/two-action rewind removes replies and derived memory', async () => {
+  const { createCharacterRehearsal } = await import('./characters.mjs');
+  let p = playerAction(emptyPlay('doorway-demo'), 'Open the outer door.', 'outer', 'cp-outer');
+  async function accept(play, sourceId, dialogue) {
+    const session = createCharacterRehearsal(), metadata = { playSchema: play.schema, verifiedRevision: 0, unsavedChanges: true, pendingRestore: false };
+    session.update(portfolioView(play, 'game'), metadata);
+    session.approve([{ sourceId, excerpt: play.events.find(event => event.id === sourceId).text }]);
+    const packet = await session.prepare(); session.validateReply({ schema: 'theater-character-reply@1', characterId: 'rias', attemptId: packet.attemptId, fingerprint: packet.fingerprint, dialogue });
+    return session.accept(play, metadata);
+  }
+  p = await accept(p, 'outer', 'Rias acknowledges the open door.'); const firstReplyId = p.events.at(-1).id;
+  p = playerAction(p, 'Step into the courtyard.', 'courtyard', 'cp-courtyard');
+  p = await accept(p, 'courtyard', 'Rias looks around the courtyard.'); const secondReplyId = p.events.at(-1).id;
+  for (const section of ['long', 'short', 'recent']) p = setEntry(p, 'game', section, 'Courtyard continuity.', [secondReplyId]);
+  assert.equal(p.checkpoints.length, 2);
+  const f = storageFixture(), store = theaterStorage(f.drive);
+  await store.savePlay(p.playId, 0, p, 'saved-v3');
+  const recovered = await theaterStorage(f.drive).loadPlay(p.playId);
+  assert.deepEqual(recovered.snapshot.events.at(-1).provenance, p.events.at(-1).provenance);
+  const one = proposeRestore(recovered.snapshot, 'cp-courtyard', 1, 'one-turn').snapshot;
+  assert.equal(one.schema, 'theater-play@3');
+  assert.ok(portfolioView(one, 'game').events.some(event => event.id === firstReplyId));
+  assert.ok(!portfolioView(one, 'game').events.some(event => event.id === secondReplyId));
+  assert.doesNotMatch(JSON.stringify(portfolioView(one, 'game')), /Courtyard continuity|looks around/);
+  const two = proposeRestore(recovered.snapshot, 'cp-outer', 1, 'two-turn').snapshot;
+  assert.equal(portfolioView(two, 'game').events.length, 0); assert.deepEqual(two.game, { long: [], short: [], recent: [] });
+  assert.equal(portfolioView(two, 'meta').events.find(event => event.id === secondReplyId).branchStatus, 'discarded');
+  await store.savePlay(two.playId, 1, two, 'saved-restored-v3');
+  const reloaded = await theaterStorage(f.drive).loadPlay(two.playId);
+  assert.equal(portfolioView(reloaded.snapshot, 'game').events.length, 0);
+  assert.equal(reloaded.snapshot.events.find(event => event.id === secondReplyId).speaker.id, 'rias');
+  const next = playerAction(reloaded.snapshot, 'Choose another route.', 'route', 'cp-route');
+  assert.equal(next.schema, 'theater-play@3'); assert.doesNotMatch(JSON.stringify(portfolioView(next, 'game')), /looks around|Courtyard/);
+});

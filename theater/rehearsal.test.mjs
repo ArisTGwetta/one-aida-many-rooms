@@ -131,3 +131,27 @@ test('explicit hypothetical baseline is session-only, source-grounded and cannot
   await assert.rejects(packetFor(p, 'game', metadata, tampered));
   assert.deepEqual(p, before);
 });
+
+test('v3 rehearsal preserves character attribution while excluding private and discarded dialogue', async () => {
+  const { createCharacterRehearsal } = await import('./characters.mjs');
+  let p = appendEvent(emptyPlay('doorway-demo'), 'meta', 'Private synthetic narrator knowledge.', 'private');
+  p = playerAction(p, 'A stranger is visible.', 'visible', 'before-scene');
+  const session = createCharacterRehearsal(), info = { ...metadata, playSchema: p.schema };
+  session.update(portfolioView(p, 'game'), info); session.approve([{ sourceId: 'visible', excerpt: 'A stranger is visible.' }]);
+  const attempt = await session.prepare(); session.validateReply({ schema: 'theater-character-reply@1', characterId: 'rias',
+    attemptId: attempt.attemptId, fingerprint: attempt.fingerprint, dialogue: 'Rias asks a cautious question.' });
+  const accepted = await session.accept(p, info);
+  const packet = await packetFor(accepted, 'game', { ...metadata, playSchema: accepted.schema, unsavedChanges: true });
+  const evidence = packet.evidence.find(event => event.text === 'Rias asks a cautious question.');
+  assert.deepEqual(evidence.attribution, { speaker: 'Rias', origin: 'manually_supplied_model_proposal', acceptedBy: 'Francisco' });
+  assert.doesNotMatch(JSON.stringify(packet), /Private synthetic narrator/);
+  const response = proposal(packet, [operation({ text: 'Rias asked a cautious question.', evidence: [{ sourceId: evidence.sourceId, excerpt: evidence.text }] })]);
+  const result = await validateProposal(packet, response, packet);
+  assert.equal(result.proposed.short[0].text, 'Rias asked a cautious question.');
+  const restored = proposeRestore(accepted, 'before-scene', 5, 'rewind-character').snapshot;
+  const game = await packetFor(restored, 'game', { ...metadata, playSchema: restored.schema });
+  assert.doesNotMatch(JSON.stringify(game), /cautious question/);
+  const meta = await packetFor(restored, 'meta', { ...metadata, playSchema: restored.schema });
+  assert.equal(meta.evidence.find(event => event.text === evidence.text).status, 'discarded');
+  await assert.rejects(validateProposal(packet, response, game), /Stale/);
+});

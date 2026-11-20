@@ -3,7 +3,7 @@ import { createEvidencePacket, validateProposal, useHypotheticalBaseline } from 
 import { buildMemoryReport } from './reports.mjs';
 import { playerAction, proposeRestore, commitRestore } from './restore.mjs';
 import { plays, finishVisit } from './contracts.mjs';
-import { emptyPlay, appendEvent, setEntry, portfolioView, upgradePlay } from './continuity.mjs';
+import { emptyPlay, appendEvent, setEntry, portfolioView, upgradePlay, eventAttribution } from './continuity.mjs';
 export function setupTheater({ registry, storage }) {
   const el = id => document.getElementById(id);
   const button = el('theater-open');
@@ -132,7 +132,7 @@ export function setupTheater({ registry, storage }) {
   const characterPanel = document.createElement('details');
   const characterTitle = document.createElement('summary'); characterTitle.textContent = 'Rias · supervised reply rehearsal';
   const characterNotice = document.createElement('p');
-  characterNotice.textContent = 'Proposed replies are session-local, unsaved and noncanonical. Nothing is sent automatically or accepted into the story. Approve only what Rias can know, then use a fresh external model conversation for each independent test.';
+  characterNotice.textContent = 'Proposed replies are session-local, unsaved and noncanonical. Nothing is sent or accepted automatically. Explicit acceptance changes only local GAME; Save play is required for durable persistence. Approve only what Rias can know, then use a fresh external model conversation for each independent test.';
   characterPanel.append(characterTitle, characterNotice);
   const sourceLabel = document.createElement('label'); sourceLabel.textContent = 'Active GAME evidence'; sourceLabel.htmlFor = 'theater-character-source';
   const characterSource = document.createElement('select'); characterSource.id = 'theater-character-source';
@@ -167,11 +167,11 @@ export function setupTheater({ registry, storage }) {
     characterSelected.textContent = (view.approved ? 'APPROVED for Rias in this current GAME state' : 'Not approved for Rias') + '\n' +
       (characterSelections.length ? characterSelections.map((item, index) => 'visible-' + (index + 1) + ': ' + item.excerpt).join('\n') : 'Select exact excerpts, then explicitly approve them.');
     characterPacket.textContent = view.packet ? JSON.stringify(view.packet, null, 2) : 'No packet prepared. Inspect the packet here before explicitly copying it.';
-    characterProposal.textContent = view.proposal ? view.proposal.status + '\n\nRias — proposed reply\n' + view.proposal.dialogue : 'No proposed Rias reply. This panel cannot add dialogue to canon.';
+    characterProposal.textContent = view.proposal ? view.proposal.status + '\n\nRias — proposed reply\n' + view.proposal.dialogue : 'No proposed Rias reply. Only explicit acceptance can add dialogue to local GAME.';
     characterSource.disabled = characterExcerpt.disabled = busy || !play || !characterSources.length;
     characterReply.disabled = busy || !view.packet;
     for (const { button, requires } of characterActions)
-      button.disabled = busy || !play || (requires === 'selected' && !characterSelections.length) ||
+      button.disabled = busy || !play || Boolean(pending) || (requires === 'proposal' && !view.proposal) || (requires === 'selected' && !characterSelections.length) ||
         (requires === 'approved' && !view.approved) || (requires === 'packet' && !view.packet);
   }
   function characterButton(label, requires, action) {
@@ -215,6 +215,13 @@ export function setupTheater({ registry, storage }) {
     status('Rias reply is proposed, session-local, unsaved and noncanonical. Review for unsupported knowledge.');
   });
   characterPanel.append(characterProposal);
+  characterButton('Accept Rias reply into GAME', 'proposal', async () => {
+    const next = await characterSession.accept(play, { playSchema: play.schema, verifiedRevision: revision,
+      unsavedChanges: dirty, pendingRestore: pending?.kind === 'restore' });
+    play = next; dirty = true;
+    characterReply.value = '';
+    status('Rias reply accepted locally — unsaved. Use Save play for verified durable persistence.');
+  });
   characterButton('Regenerate Rias attempt', 'packet', async () => {
     await characterSession.prepare(); characterReply.value = '';
     status('Fresh Rias attempt prepared. Previous attempt invalidated; no dialogue entered GAME.');
@@ -264,13 +271,14 @@ export function setupTheater({ registry, storage }) {
       const item = document.createElement('article');
       item.dataset.audience = event.scope;
       const label = document.createElement('strong');
-      label.textContent = 'Francisco · submitted by user · ' + (event.scope === 'game' ? 'GAME / Onstage · ' + event.branchStatus : 'META / Backstage');
+      const attribution = eventAttribution(event);
+      label.textContent = (event.speaker ? 'Rias · manually supplied model proposal · accepted by Francisco · ' : 'Francisco · submitted by user · ') + (event.scope === 'game' ? 'GAME / Onstage · ' + event.branchStatus : 'META / Backstage');
       const text = document.createElement('p');
       text.textContent = event.text;
       const portrait = document.createElement('span');
       portrait.className = 'theater-portrait';
-      portrait.textContent = 'F';
-      portrait.setAttribute('aria-label', 'Francisco');
+      portrait.textContent = event.speaker ? 'R' : 'F';
+      portrait.setAttribute('aria-label', attribution.speaker);
       const message = document.createElement('div');
       message.append(label, text);
       item.append(portrait, message);
