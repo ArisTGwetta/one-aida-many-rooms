@@ -1,3 +1,4 @@
+import { createCharacterRehearsal } from './characters.mjs';
 import { createEvidencePacket, validateProposal, useHypotheticalBaseline } from './rehearsal.mjs';
 import { buildMemoryReport } from './reports.mjs';
 import { playerAction, proposeRestore, commitRestore } from './restore.mjs';
@@ -126,12 +127,111 @@ export function setupTheater({ registry, storage }) {
   });
   rehearsalAudience.addEventListener('change', () => { rehearsalProposal.value = ''; paintRehearsal(); });
   document.querySelector('#theater-room .theater-backstage').append(rehearsalPanel);
+  const characterSession = createCharacterRehearsal();
+  let characterSelections = [], characterSources = [];
+  const characterPanel = document.createElement('details');
+  const characterTitle = document.createElement('summary'); characterTitle.textContent = 'Rias · supervised reply rehearsal';
+  const characterNotice = document.createElement('p');
+  characterNotice.textContent = 'Proposed replies are session-local, unsaved and noncanonical. Nothing is sent automatically or accepted into the story. Approve only what Rias can know, then use a fresh external model conversation for each independent test.';
+  characterPanel.append(characterTitle, characterNotice);
+  const sourceLabel = document.createElement('label'); sourceLabel.textContent = 'Active GAME evidence'; sourceLabel.htmlFor = 'theater-character-source';
+  const characterSource = document.createElement('select'); characterSource.id = 'theater-character-source';
+  const characterSourceText = document.createElement('pre');
+  const excerptLabel = document.createElement('label'); excerptLabel.textContent = 'Exact excerpt Rias may perceive or know'; excerptLabel.htmlFor = 'theater-character-excerpt';
+  const characterExcerpt = document.createElement('textarea'); characterExcerpt.id = 'theater-character-excerpt'; characterExcerpt.maxLength = 2000; characterExcerpt.rows = 2;
+  const characterSelected = document.createElement('pre');
+  const characterPacket = document.createElement('pre');
+  const replyLabel = document.createElement('label'); replyLabel.textContent = 'Paste proposed Rias reply JSON'; replyLabel.htmlFor = 'theater-character-reply';
+  const characterReply = document.createElement('textarea'); characterReply.id = 'theater-character-reply'; characterReply.maxLength = 12000; characterReply.rows = 3;
+  const characterProposal = document.createElement('pre');
+  const characterActions = [];
+  function paintCharacters() {
+    if (play) {
+      const projection = portfolioView(play, 'game');
+      const changed = characterSession.update(projection, { playSchema: play.schema, verifiedRevision: revision,
+        unsavedChanges: dirty, pendingRestore: pending?.kind === 'restore' });
+      if (changed) {
+        characterSelections = []; characterSources = projection.events;
+        const previous = characterSource.value;
+        characterSource.replaceChildren();
+        for (const [index, event] of characterSources.entries()) {
+          const option = document.createElement('option'); option.value = event.id;
+          option.textContent = 'Event ' + (index + 1) + ' · ' + event.text.slice(0, 70);
+          characterSource.append(option);
+        }
+        characterSource.value = characterSources.some(event => event.id === previous) ? previous : characterSources[0]?.id ?? '';
+      }
+    } else { characterSession.reset(); characterSelections = []; characterSources = []; }
+    const view = characterSession.view();
+    characterSourceText.textContent = characterSources.find(event => event.id === characterSource.value)?.text ?? 'No active GAME evidence available. Fail closed until suitable evidence exists.';
+    characterSelected.textContent = (view.approved ? 'APPROVED for Rias in this current GAME state' : 'Not approved for Rias') + '\n' +
+      (characterSelections.length ? characterSelections.map((item, index) => 'visible-' + (index + 1) + ': ' + item.excerpt).join('\n') : 'Select exact excerpts, then explicitly approve them.');
+    characterPacket.textContent = view.packet ? JSON.stringify(view.packet, null, 2) : 'No packet prepared. Inspect the packet here before explicitly copying it.';
+    characterProposal.textContent = view.proposal ? view.proposal.status + '\n\nRias — proposed reply\n' + view.proposal.dialogue : 'No proposed Rias reply. This panel cannot add dialogue to canon.';
+    characterSource.disabled = characterExcerpt.disabled = busy || !play || !characterSources.length;
+    characterReply.disabled = busy || !view.packet;
+    for (const { button, requires } of characterActions)
+      button.disabled = busy || !play || (requires === 'selected' && !characterSelections.length) ||
+        (requires === 'approved' && !view.approved) || (requires === 'packet' && !view.packet);
+  }
+  function characterButton(label, requires, action) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+    button.addEventListener('click', () => task(action)); characterActions.push({ button, requires }); characterPanel.append(button);
+  }
+  characterPanel.append(sourceLabel, characterSource, characterSourceText, excerptLabel, characterExcerpt);
+  characterButton('Select visible excerpt', null, async () => {
+    const selected = characterSession.checkExcerpts([...characterSelections, { sourceId: characterSource.value, excerpt: characterExcerpt.value }]);
+    characterSession.clearApproval(); characterSelections = selected; characterExcerpt.value = '';
+    status('Excerpt selected locally. Explicit approval for Rias is still required.');
+  });
+  characterPanel.append(characterSelected);
+  characterButton('Approve selected excerpts for Rias', 'selected', async () => {
+    characterSession.approve(characterSelections);
+    status('Visible excerpts approved for Rias. Prepare a packet to inspect before copying.');
+  });
+  characterButton('Clear character excerpts', null, async () => {
+    characterSession.clearApproval(); characterSelections = [];
+    status('Character approvals, packet and proposal cleared.');
+  });
+  characterButton('Prepare Rias packet', 'approved', async () => {
+    await characterSession.prepare(); characterReply.value = '';
+    status('Rias packet prepared for inspection. Nothing transmitted.');
+  });
+  characterPanel.append(characterPacket);
+  characterButton('Copy inspected Rias packet', 'packet', async () => {
+    const packet = characterSession.view().packet;
+    if (!packet) throw Error('No current Rias packet.');
+    try {
+      if (!navigator.clipboard?.writeText) throw Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(JSON.stringify(packet, null, 2));
+    } catch { throw Error('Could not copy Rias packet. Allow clipboard access and try again.'); }
+    status('Rias packet copied. Use a fresh external model conversation.');
+  });
+  characterPanel.append(replyLabel, characterReply);
+  characterButton('Show proposed Rias reply', 'packet', async () => {
+    let reply;
+    try { reply = JSON.parse(characterReply.value); } catch { throw Error('Rias reply must be valid JSON matching the current packet.'); }
+    characterSession.validateReply(reply);
+    status('Rias reply is proposed, session-local, unsaved and noncanonical. Review for unsupported knowledge.');
+  });
+  characterPanel.append(characterProposal);
+  characterButton('Regenerate Rias attempt', 'packet', async () => {
+    await characterSession.prepare(); characterReply.value = '';
+    status('Fresh Rias attempt prepared. Previous attempt invalidated; no dialogue entered GAME.');
+  });
+  characterButton('Discard Rias attempt', 'packet', async () => {
+    characterSession.discard(); characterReply.value = '';
+    status('Rias attempt and proposal discarded. Play memory unchanged.');
+  });
+  characterSource.addEventListener('change', paintCharacters);
+  document.querySelector('#theater-room .theater-backstage').append(characterPanel);
   for (const item of plays) {
     const option = document.createElement('option');
     option.value = item.id; option.textContent = item.title; el('theater-play').append(option);
   }
   function render() {
     paintRehearsal();
+    paintCharacters();
     for (const button of reportButtons) button.disabled = busy || !play;
     const checkpoints = play?.checkpoints ?? [];
     for (const [id, offset] of [['theater-restore-last', 1], ['theater-restore-previous', 2]]) {

@@ -37,7 +37,7 @@ test('room navigation selects and recovers a play without host conversation acce
     return elements.get(id);
   };
   const previous = globalThis.document;
-  globalThis.document = { getElementById: element, querySelector: () => element('backstage'), createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
+  globalThis.document = { getElementById: element, querySelector: () => element('backstage'), createElement: () => ({ dataset: {}, children: [], replaceChildren() { this.children = []; }, setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
   try {
     element('message').value = 'Unsent everyday draft';
     element('theater-portfolio').value = 'meta';
@@ -116,7 +116,7 @@ test('timeline names audiences; unsaved indicator survives navigation and failed
     return nodes.get(id);
   };
   const previous = globalThis.document;
-  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
+  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: () => ({ dataset: {}, children: [], replaceChildren() { this.children = []; }, setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
   try {
     node('theater-portfolio').value = 'meta'; node('theater-scope').value = 'meta';
     node('message').value = 'Everyday draft';
@@ -333,6 +333,75 @@ test('rehearsal UI inspects separate packets, preserves validated state on error
     assert.equal(meta.hypothetical, false);
     assert.equal(writes, 0);
     assert.equal(node('message').value, 'Everyday draft');
+  } finally {
+    globalThis.document = originalDocument;
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
+});
+
+test('Rias UI requires explicit approval, copies only approved excerpts and never writes or canonizes replies', async () => {
+  const nodes = new Map();
+  const make = tagName => ({ tagName, dataset: {}, value: '', textContent: '', children: [], handlers: {},
+    append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; },
+    setAttribute() {}, addEventListener(type, fn) { this.handlers[type] = fn; },
+    dispatchEvent(event) { this.handlers[event.type]?.(event); } });
+  const node = id => { if (!nodes.has(id)) nodes.set(id, make('node')); return nodes.get(id); };
+  const originalDocument = globalThis.document, originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: make };
+  const copied = []; let clipboardFails = true;
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: {
+    async writeText(text) { if (clipboardFails) throw Error('Clipboard denied'); copied.push(text); }
+  } } });
+  try {
+    node('theater-portfolio').value = 'game'; node('theater-scope').value = 'meta'; let writes = 0;
+    setupTheater({ registry: createSkillRegistry([rpgBinding()]), storage: {
+      loadPlay: async () => null, savePlay: async () => { writes++; throw Error('Unexpected persistence'); }
+    } });
+    const panel = node('backstage').children.find(child => child.children.some(item => item.textContent === 'Rias · supervised reply rehearsal'));
+    const find = label => panel.children.find(child => child.textContent === label);
+    const byId = id => panel.children.find(child => child.id === id);
+    const [sourceView, selectionView, packetView, proposalView] = panel.children.filter(child => child.tagName === 'pre');
+    assert.ok(panel); assert.equal(find('Prepare Rias packet').disabled, true);
+    assert.ok(!panel.children.some(child => child.tagName === 'button' && /accept/i.test(child.textContent)));
+    await node('theater-open').handlers.click(); node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
+    node('theater-text').value = 'Private synthetic backstage secret.'; await node('theater-add').handlers.click();
+    node('theater-scope').value = 'game'; node('theater-scope').handlers.change();
+    node('theater-text').value = 'An unidentified figure approaches. An omniscient note reveals a hidden map.'; await node('theater-add').handlers.click();
+    node('theater-text').value = 'Unsent Theater draft'; node('message').value = 'Everyday draft';
+    const before = node('theater-data').textContent;
+    assert.match(sourceView.textContent, /omniscient/);
+    byId('theater-character-excerpt').value = 'An unidentified figure approaches.';
+    await find('Select visible excerpt').handlers.click();
+    assert.equal(find('Prepare Rias packet').disabled, true);
+    assert.match(selectionView.textContent, /Not approved/);
+    await find('Approve selected excerpts for Rias').handlers.click(); await find('Prepare Rias packet').handlers.click();
+    const first = JSON.parse(packetView.textContent);
+    assert.deepEqual(first.approvedEvidence, [{ alias: 'visible-1', text: 'An unidentified figure approaches.' }]);
+    assert.doesNotMatch(packetView.textContent, /hidden map|omniscient|Private synthetic/);
+    await find('Copy inspected Rias packet').handlers.click();
+    assert.match(node('theater-status').textContent, /Could not copy Rias/);
+    assert.deepEqual(JSON.parse(packetView.textContent), first);
+    clipboardFails = false; await find('Copy inspected Rias packet').handlers.click();
+    assert.equal(copied.length, 1); assert.deepEqual(JSON.parse(copied[0]), first);
+    const response = { schema: 'theater-character-reply@1', characterId: 'rias', attemptId: first.attemptId,
+      fingerprint: first.fingerprint, dialogue: 'Rias tilts her head. “Who is there?”' };
+    byId('theater-character-reply').value = JSON.stringify(response); await find('Show proposed Rias reply').handlers.click();
+    assert.match(proposalView.textContent, /PROPOSED.*noncanonical/);
+    assert.match(proposalView.textContent, /Who is there/);
+    assert.equal(node('theater-data').textContent, before);
+    await find('Regenerate Rias attempt').handlers.click(); const second = JSON.parse(packetView.textContent);
+    assert.notEqual(first.attemptId, second.attemptId); assert.match(proposalView.textContent, /No proposed Rias reply/);
+    byId('theater-character-reply').value = JSON.stringify(response); await find('Show proposed Rias reply').handlers.click();
+    assert.match(node('theater-status').textContent, /Invalid or stale/);
+    assert.match(proposalView.textContent, /No proposed Rias reply/);
+    await find('Discard Rias attempt').handlers.click(); assert.match(packetView.textContent, /No packet prepared/);
+    await find('Prepare Rias packet').handlers.click();
+    node('theater-text').value = 'A new visible bell rings.'; await node('theater-add').handlers.click();
+    assert.match(packetView.textContent, /No packet prepared/); assert.match(selectionView.textContent, /Not approved/);
+    assert.equal(find('Prepare Rias packet').disabled, true);
+    assert.equal(writes, 0); assert.equal(node('message').value, 'Everyday draft');
+    assert.doesNotMatch(node('theater-data').textContent, /Who is there/);
   } finally {
     globalThis.document = originalDocument;
     if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
