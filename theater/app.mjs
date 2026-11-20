@@ -1,3 +1,4 @@
+import { createEvidencePacket, validateProposal, useHypotheticalBaseline } from './rehearsal.mjs';
 import { buildMemoryReport } from './reports.mjs';
 import { playerAction, proposeRestore, commitRestore } from './restore.mjs';
 import { plays, finishVisit } from './contracts.mjs';
@@ -28,11 +29,109 @@ export function setupTheater({ registry, storage }) {
     document.querySelector('#theater-room .theater-backstage').append(button);
     return button;
   });
+  const rehearsalStates = new Map();
+  const rehearsalPanel = document.createElement('details');
+  const rehearsalTitle = document.createElement('summary');
+  rehearsalTitle.textContent = 'Memory rehearsal · hypothetical, never saved or applied';
+  rehearsalPanel.append(rehearsalTitle);
+  const rehearsalNotice = document.createElement('p');
+  rehearsalNotice.textContent = 'Inspect the selected audience and evidence before copying. Copying may disclose private play content to the external summarizer you choose. No model is called here. Validation checks structure and sources; human semantic review is still required.';
+  rehearsalPanel.append(rehearsalNotice);
+  const audienceLabel = document.createElement('label');
+  audienceLabel.textContent = 'Rehearsal audience'; audienceLabel.htmlFor = 'theater-rehearsal-audience';
+  const rehearsalAudience = document.createElement('select'); rehearsalAudience.id = 'theater-rehearsal-audience';
+  for (const audience of ['game', 'meta']) {
+    const option = document.createElement('option'); option.value = audience; option.textContent = audience.toUpperCase();
+    rehearsalAudience.append(option);
+  }
+  rehearsalAudience.value = 'game'; rehearsalPanel.append(audienceLabel, rehearsalAudience);
+  const rehearsalPacket = document.createElement('pre');
+  const proposalLabel = document.createElement('label');
+  proposalLabel.textContent = 'Paste proposed JSON for the selected audience'; proposalLabel.htmlFor = 'theater-rehearsal-proposal';
+  const rehearsalProposal = document.createElement('textarea'); rehearsalProposal.id = 'theater-rehearsal-proposal';
+  rehearsalProposal.rows = 5; rehearsalProposal.maxLength = 150000;
+  const rehearsalResult = document.createElement('pre');
+  const rehearsalActions = [];
+  function rehearsalContext() {
+    const audience = rehearsalAudience.value;
+    const projection = portfolioView(play, audience);
+    const metadata = { playSchema: play.schema, verifiedRevision: revision, unsavedChanges: dirty,
+      pendingRestore: pending?.kind === 'restore' };
+    const sourceKey = JSON.stringify({ projection, metadata });
+    let state = rehearsalStates.get(audience);
+    if (!state || state.sourceKey !== sourceKey) {
+      state = { sourceKey, hypothesis: null, packet: null, result: null };
+      rehearsalStates.set(audience, state);
+    }
+    return { audience, projection, metadata, state };
+  }
+  async function freshRehearsalPacket(context) {
+    const packet = await createEvidencePacket(context.projection, context.audience, context.metadata, context.state.hypothesis);
+    if (!context.state.packet || packet.baselineFingerprint !== context.state.packet.baselineFingerprint)
+      throw Error('Rehearsal evidence changed. Inspect a new packet and validate again.');
+    return packet;
+  }
+  function paintRehearsal() {
+    const state = play ? rehearsalContext().state : null;
+    rehearsalPacket.textContent = state?.packet ? JSON.stringify(state.packet, null, 2) : 'Inspect current evidence to prepare a separate audience packet. Earlier proposals become stale when evidence changes.';
+    rehearsalResult.textContent = state?.result ? JSON.stringify(state.result, null, 2) : 'No validated proposal for this baseline. Hypothetical rehearsal only.';
+    for (const { button, requires } of rehearsalActions)
+      button.disabled = busy || !play || (requires === 'packet' && !state?.packet) || (requires === 'result' && !state?.result);
+    rehearsalAudience.disabled = busy || !play;
+  }
+  function rehearsalButton(label, requires, action) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+    button.addEventListener('click', () => task(action));
+    rehearsalActions.push({ button, requires }); rehearsalPanel.append(button);
+  }
+  rehearsalButton('Inspect rehearsal evidence', null, async () => {
+    const context = rehearsalContext();
+    const packet = await createEvidencePacket(context.projection, context.audience, context.metadata, context.state.hypothesis);
+    context.state.packet = packet;
+    status(context.audience.toUpperCase() + ' packet ready for inspection. Nothing saved or applied.');
+  });
+  rehearsalPanel.append(rehearsalPacket);
+  async function copyRehearsal(text) {
+    try {
+      if (!navigator.clipboard?.writeText) throw Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(text);
+    } catch { throw Error('Could not copy rehearsal content. Allow clipboard access and try again.'); }
+  }
+  rehearsalButton('Copy inspected evidence packet', 'packet', async () => {
+    const context = rehearsalContext(); await freshRehearsalPacket(context);
+    await copyRehearsal(JSON.stringify(context.state.packet, null, 2));
+    status(context.audience.toUpperCase() + ' evidence packet copied.');
+  });
+  rehearsalPanel.append(proposalLabel, rehearsalProposal);
+  rehearsalButton('Validate rehearsal proposal', 'packet', async () => {
+    const context = rehearsalContext(); const current = await freshRehearsalPacket(context);
+    let proposal;
+    try { proposal = JSON.parse(rehearsalProposal.value); } catch { throw Error('Proposal is not valid JSON; previous rehearsal result retained.'); }
+    const result = await validateProposal(context.state.packet, proposal, current);
+    context.state.result = result;
+    status('Structure and sources validated. Human semantic approval is still required. Nothing saved or applied.');
+  });
+  rehearsalPanel.append(rehearsalResult);
+  rehearsalButton('Copy rehearsal result', 'result', async () => {
+    const context = rehearsalContext(); await freshRehearsalPacket(context);
+    await copyRehearsal(JSON.stringify(context.state.result, null, 2));
+    status(context.audience.toUpperCase() + ' hypothetical rehearsal result copied.');
+  });
+  rehearsalButton('Use as next hypothetical rehearsal baseline', 'result', async () => {
+    const context = rehearsalContext(); await freshRehearsalPacket(context);
+    const hypothesis = useHypotheticalBaseline(context.state.packet, context.state.result);
+    const packet = await createEvidencePacket(context.projection, context.audience, context.metadata, hypothesis);
+    context.state.hypothesis = hypothesis; context.state.packet = packet; context.state.result = null;
+    status('Next baseline is hypothetical and session-local. Actual Theater memory remains unchanged.');
+  });
+  rehearsalAudience.addEventListener('change', () => { rehearsalProposal.value = ''; paintRehearsal(); });
+  document.querySelector('#theater-room .theater-backstage').append(rehearsalPanel);
   for (const item of plays) {
     const option = document.createElement('option');
     option.value = item.id; option.textContent = item.title; el('theater-play').append(option);
   }
   function render() {
+    paintRehearsal();
     for (const button of reportButtons) button.disabled = busy || !play;
     const checkpoints = play?.checkpoints ?? [];
     for (const [id, offset] of [['theater-restore-last', 1], ['theater-restore-previous', 2]]) {

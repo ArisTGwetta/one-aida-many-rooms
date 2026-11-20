@@ -263,3 +263,79 @@ test('report controls copy projected working memory and clipboard failure preser
     else delete globalThis.navigator;
   }
 });
+
+test('rehearsal UI inspects separate packets, preserves validated state on errors and never writes play data', async () => {
+  const nodes = new Map();
+  const make = tagName => ({ tagName, dataset: {}, value: '', textContent: '', children: [], handlers: {},
+    append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; },
+    setAttribute() {}, addEventListener(type, fn) { this.handlers[type] = fn; },
+    dispatchEvent(event) { this.handlers[event.type]?.(event); } });
+  const node = id => { if (!nodes.has(id)) nodes.set(id, make('node')); return nodes.get(id); };
+  const originalDocument = globalThis.document;
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: make };
+  const copies = []; let clipboardFails = true;
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: {
+    async writeText(text) { if (clipboardFails) throw Error('Clipboard denied'); copies.push(text); }
+  } } });
+  try {
+    node('theater-portfolio').value = 'game'; node('theater-scope').value = 'meta'; let writes = 0;
+    setupTheater({ registry: createSkillRegistry([rpgBinding()]), storage: {
+      loadPlay: async () => null, savePlay: async () => { writes++; throw Error('Unexpected persistence'); }
+    } });
+    await node('theater-open').handlers.click();
+    node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
+    node('theater-text').value = 'PRIVATE synthetic backstage secret'; await node('theater-add').handlers.click();
+    node('theater-scope').value = 'game'; node('theater-scope').handlers.change();
+    node('theater-text').value = 'A guest brought flowers.'; await node('theater-add').handlers.click();
+    node('theater-text').value = 'Unsent Theater draft'; node('message').value = 'Everyday draft';
+    const before = node('theater-data').textContent;
+    const panel = node('backstage').children.find(child => child.tagName === 'details');
+    const find = label => panel.children.find(child => child.textContent === label);
+    const [packetView, resultView] = panel.children.filter(child => child.tagName === 'pre');
+    const proposalField = panel.children.find(child => child.id === 'theater-rehearsal-proposal');
+    const audience = panel.children.find(child => child.id === 'theater-rehearsal-audience');
+    assert.equal(find('Copy inspected evidence packet').disabled, true);
+    await find('Inspect rehearsal evidence').handlers.click();
+    const packet = JSON.parse(packetView.textContent);
+    assert.equal(packet.audience, 'game');
+    assert.doesNotMatch(packetView.textContent, /PRIVATE synthetic backstage secret/);
+    const source = packet.evidence[0];
+    proposalField.value = JSON.stringify({ schema: 'theater-rehearsal-proposal@1', audience: 'game', playId: packet.playId,
+      baselineFingerprint: packet.baselineFingerprint, operations: [{ layer: 'short', kind: 'add', target: null,
+        text: 'A guest brought flowers.', classification: 'accepted', evidence: [{ sourceId: source.sourceId, excerpt: source.text }], reason: 'Scene continuity.' }] });
+    await find('Validate rehearsal proposal').handlers.click();
+    const validated = resultView.textContent;
+    assert.match(validated, /NOT APPROVED/);
+    await find('Copy inspected evidence packet').handlers.click();
+    assert.match(node('theater-status').textContent, /Could not copy rehearsal/);
+    assert.equal(resultView.textContent, validated);
+    assert.equal(packetView.textContent, JSON.stringify(packet, null, 2));
+    await find('Copy rehearsal result').handlers.click();
+    assert.equal(resultView.textContent, validated);
+    assert.equal(copies.length, 0);
+    proposalField.value = '{invalid'; await find('Validate rehearsal proposal').handlers.click();
+    assert.equal(resultView.textContent, validated);
+    clipboardFails = false;
+    await find('Copy inspected evidence packet').handlers.click(); await find('Copy rehearsal result').handlers.click();
+    assert.equal(copies.length, 2); assert.doesNotMatch(copies.join(''), /PRIVATE synthetic backstage secret/);
+    await find('Use as next hypothetical rehearsal baseline').handlers.click();
+    const next = JSON.parse(packetView.textContent);
+    assert.equal(next.hypothetical, true); assert.equal(next.baseline.short.length, 1);
+    assert.notEqual(next.baselineFingerprint, packet.baselineFingerprint);
+    assert.equal(node('theater-data').textContent, before);
+    node('theater-text').value = 'A new event changes context.'; await node('theater-add').handlers.click();
+    assert.match(packetView.textContent, /Inspect current evidence/);
+    assert.equal(find('Copy rehearsal result').disabled, true);
+    audience.value = 'meta'; audience.handlers.change(); await find('Inspect rehearsal evidence').handlers.click();
+    const meta = JSON.parse(packetView.textContent);
+    assert.equal(meta.audience, 'meta'); assert.match(packetView.textContent, /PRIVATE synthetic backstage secret/);
+    assert.equal(meta.hypothetical, false);
+    assert.equal(writes, 0);
+    assert.equal(node('message').value, 'Everyday draft');
+  } finally {
+    globalThis.document = originalDocument;
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
+});
