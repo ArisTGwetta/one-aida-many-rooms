@@ -37,7 +37,7 @@ test('room navigation selects and recovers a play without host conversation acce
     return elements.get(id);
   };
   const previous = globalThis.document;
-  globalThis.document = { getElementById: element, createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
+  globalThis.document = { getElementById: element, querySelector: () => element('backstage'), createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
   try {
     element('message').value = 'Unsent everyday draft';
     element('theater-portfolio').value = 'meta';
@@ -116,7 +116,7 @@ test('timeline names audiences; unsaved indicator survives navigation and failed
     return nodes.get(id);
   };
   const previous = globalThis.document;
-  globalThis.document = { getElementById: node, createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
+  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: () => ({ dataset: {}, children: [], setAttribute() {}, addEventListener() {}, append(...children) { this.children.push(...children); } }) };
   try {
     node('theater-portfolio').value = 'meta'; node('theater-scope').value = 'meta';
     node('message').value = 'Everyday draft';
@@ -170,7 +170,7 @@ test('explicit player boundary preserves failed-send draft and restore is invisi
     dispatchEvent(event) { this.handlers[event.type]?.(event); } });
   const node = id => { if (!nodes.has(id)) nodes.set(id, make()); return nodes.get(id); };
   const previousDocument = globalThis.document, previousConfirm = globalThis.confirm;
-  globalThis.document = { getElementById: node, createElement: make }; globalThis.confirm = () => true;
+  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: make }; globalThis.confirm = () => true;
   try {
     node('theater-scope').value = 'game'; node('theater-portfolio').value = 'game';
     let fail = true; const writes = [];
@@ -212,4 +212,54 @@ test('explicit player boundary preserves failed-send draft and restore is invisi
     const labels = node('theater-timeline').children.map(x => x.children[1].children[0].textContent);
     assert.ok(labels.every(label => label.includes('discarded')));
   } finally { globalThis.document = previousDocument; globalThis.confirm = previousConfirm; }
+});
+
+test('report controls copy projected working memory and clipboard failure preserves play and drafts', async () => {
+  const nodes = new Map();
+  const make = () => ({ dataset: {}, value: '', textContent: '', children: [], handlers: {},
+    append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; },
+    setAttribute() {}, addEventListener(type, fn) { this.handlers[type] = fn; },
+    dispatchEvent(event) { this.handlers[event.type]?.(event); } });
+  const node = id => { if (!nodes.has(id)) nodes.set(id, make()); return nodes.get(id); };
+  const originalDocument = globalThis.document;
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const copied = []; let fail = true;
+  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: make };
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: {
+    async writeText(text) { if (fail) throw Error('Clipboard denied'); copied.push(text); }
+  } } });
+  try {
+    node('theater-portfolio').value = 'game'; node('theater-scope').value = 'meta';
+    let writes = 0;
+    setupTheater({ registry: createSkillRegistry([rpgBinding()]), storage: {
+      loadPlay: async () => null, savePlay: async () => { writes++; throw Error('Unexpected write'); }
+    } });
+    const [meta, game] = node('backstage').children;
+    assert.equal(meta.textContent, 'Copy full META report');
+    assert.equal(game.textContent, 'Copy full GAME report');
+    assert.equal(game.disabled, true);
+    await node('theater-open').handlers.click();
+    node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
+    node('theater-text').value = 'PRIVATE backstage secret'; await node('theater-add').handlers.click();
+    node('theater-scope').value = 'game'; node('theater-scope').handlers.change();
+    node('theater-text').value = 'Visible lantern'; await node('theater-add').handlers.click();
+    node('theater-text').value = 'Unsent Theater draft'; node('message').value = 'Everyday draft';
+    const before = node('theater-data').textContent;
+    await game.handlers.click();
+    assert.match(node('theater-status').textContent, /Could not copy.*Allow clipboard/);
+    assert.equal(copied.length, 0);
+    assert.equal(node('theater-data').textContent, before);
+    assert.equal(node('theater-unsaved').hidden, false);
+    assert.equal(node('theater-text').value, 'Unsent Theater draft');
+    assert.equal(node('message').value, 'Everyday draft');
+    fail = false; await game.handlers.click(); await meta.handlers.click();
+    assert.match(copied[0], /Visible lantern/); assert.doesNotMatch(copied[0], /PRIVATE backstage secret/);
+    assert.match(copied[0], /Unsaved changes: YES/); assert.match(copied[0], /none \(0\)/);
+    assert.match(copied[1], /PRIVATE backstage secret/);
+    assert.equal(writes, 0); assert.equal(node('theater-data').textContent, before);
+  } finally {
+    globalThis.document = originalDocument;
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
 });

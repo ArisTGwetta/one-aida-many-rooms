@@ -1,3 +1,4 @@
+import { buildMemoryReport } from './reports.mjs';
 import { playerAction, proposeRestore, commitRestore } from './restore.mjs';
 import { plays, finishVisit } from './contracts.mjs';
 import { emptyPlay, appendEvent, setEntry, portfolioView, upgradePlay } from './continuity.mjs';
@@ -9,11 +10,30 @@ export function setupTheater({ registry, storage }) {
   button.disabled = false;
   let entry, play, revision = 0, visitId, resumeRef = null, pending, busy = false, dirty = false;
   const status = text => { el('theater-status').textContent = text; };
+  const reportButtons = ['meta', 'game'].map(audience => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Copy full ' + audience.toUpperCase() + ' report';
+    button.addEventListener('click', () => task(async () => {
+      const report = buildMemoryReport(play, audience, { verifiedRevision: revision, unsavedChanges: dirty,
+        pendingRestore: pending?.kind === 'restore' });
+      try {
+        if (!navigator.clipboard?.writeText) throw Error('Clipboard unavailable');
+        await navigator.clipboard.writeText(report);
+      } catch {
+        throw Error('Could not copy the Theater report. Allow clipboard access and try again.');
+      }
+      status(audience.toUpperCase() + ' report copied from the current working projection.');
+    }));
+    document.querySelector('#theater-room .theater-backstage').append(button);
+    return button;
+  });
   for (const item of plays) {
     const option = document.createElement('option');
     option.value = item.id; option.textContent = item.title; el('theater-play').append(option);
   }
   function render() {
+    for (const button of reportButtons) button.disabled = busy || !play;
     const checkpoints = play?.checkpoints ?? [];
     for (const [id, offset] of [['theater-restore-last', 1], ['theater-restore-previous', 2]]) {
       el(id).hidden = checkpoints.length < offset;
