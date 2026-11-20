@@ -1,0 +1,41 @@
+#theater-room {
+  grid-column: 1 / -1; grid-row: 4; min-height: 0; min-width: 0;
+  margin: 0; padding: .65rem; color: var(--ink); background: var(--paper);
+  border-color: var(--line); display: flex; flex-direction: column; gap: .5rem;
+  overflow: auto;
+}
+#theater-room[hidden] { display: none; }
+#theater-room .theater-heading, #theater-room .theater-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
+}
+#theater-room h2, #theater-room label, #theater-room p { margin: 0; }
+#theater-room .theater-heading { justify-content: space-between; }
+#theater-room button, #theater-room input, #theater-room select, #theater-room textarea {
+  color: var(--ink); background: var(--paper); border: 1px solid var(--line);
+  font: inherit; font-size: max(1rem, 16px); border-radius: .5rem; padding: .5rem;
+  max-width: 100%; box-sizing: border-box;
+}
+#theater-room button { min-height: 44px; }
+#theater-play { flex: 1; min-width: 10rem; }
+#theater-unsaved { border: 2px solid currentColor; padding: .3rem .5rem; border-radius: .4rem; }
+#theater-timeline { flex: 1 1 12rem; min-height: 5rem; overflow-y: auto; overflow-wrap: anywhere; }
+#theater-timeline article { padding: .65rem; margin: .35rem 0; border: 1px solid var(--line); border-radius: .6rem; background: var(--francisco-bubble); }
+#theater-timeline [data-audience="meta"] { background: var(--aida-bubble); border-inline-start: .25rem dashed var(--line); }
+#theater-timeline strong { display: block; font-size: .85rem; margin-bottom: .3rem; }
+#theater-timeline p { white-space: pre-wrap; }
+#theater-room .theater-composer { display: grid; gap: .3rem; flex-shrink: 0; }
+#theater-room .theater-send-row { display: flex; align-items: stretch; gap: .4rem; }
+#theater-room .theater-send-row textarea { flex: 1; min-width: 0; resize: vertical; max-height: 8rem; }
+#theater-room .theater-send-row button { flex: 0 0 6rem; }
+#theater-room .theater-backstage { max-height: 45dvh; overflow: auto; flex-shrink: 0; }
+#theater-room .theater-backstage label { margin-top: .6rem; }
+#theater-room pre { color: var(--ink); background: var(--aida-bubble); }
+@media (max-width: 420px) {
+  #theater-room { padding: .4rem; gap: .35rem; }
+  #theater-room .theater-heading button { padding: .35rem; }
+}
+#theater-timeline article { display: flex; gap: .5rem; align-items: flex-start; }
+#theater-timeline article > div { min-width: 0; }
+#theater-room .theater-portrait { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 2.4rem; width: 2.4rem; height: 2.4rem; border: 1px solid var(--line); border-radius: .5rem; overflow: hidden; font-size: .75rem; }
+#theater-room .theater-portrait img { width: 100%; height: 100%; object-fit: cover; }
+#theater-room .theater-recipient { display: flex; align-items: center; gap: .5rem; font-size: .85rem; }
