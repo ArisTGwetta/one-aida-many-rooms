@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aida — Disposable Memory Bridge rehearsal</title>
+<link rel="stylesheet" href="harness.css">
+<script src="https://accounts.google.com/gsi/client" defer></script><script type="module" src="browser.mjs"></script>
+</head><body><main>
+<h1>Disposable Memory Bridge rehearsal</h1>
+<p>This is a synthetic acceptance test, not ordinary Aida. No LLM calls or personal memory are used. Signing in and planning do not write files.</p>
+<p id="status" role="status">Loading configuration…</p>
+<button id="authorize" disabled>Authorize Google Drive and prepare plan</button>
+<h2>Exact target and proposed artifacts</h2>
+<p>The test creates a uniquely named container beneath the configured development folder. The inner folder retains the adapter's required name. All catalogs, global context, project context and journals belong to this run.</p>
+<pre id="plan">No plan prepared.</pre>
+<label><input id="confirm" type="checkbox" disabled> I approve this exact synthetic write manifest. Existing Aida records must remain untouched.</label>
+<button id="execute" disabled>Run disposable test — writes to Drive</button>
+<h2>Results and exact artifact versions</h2><div id="results" aria-live="polite"></div>
+<details><summary>Artifact manifest and sanitized execution record</summary><pre id="report">No artifacts created.</pre></details>
+<button id="download" disabled>Download credential-free report</button>
+<h2>Cleanup</h2><p>Cleanup trashes only verified exact IDs created by this run. Changed versions, uncertain ownership, or nonempty folders stop cleanup. It never discovers additional files to delete. Trash is recoverable.</p>
+<label><input id="cleanup-confirm" type="checkbox" disabled> I approve cleanup of this run's verified artifacts.</label>
+<button id="cleanup" disabled>Trash verified synthetic artifacts only</button>
+<p>Keep this page open until cleanup finishes. Reinitializing clients inside the test checks cold-context recovery; it does not require reloading this page. Reload loses this page's token and run controller. Download the report before closing; it contains exact IDs for any retained artifacts, never credentials. No automated cleanup is attempted after reload.</p>
+</main></body></html>

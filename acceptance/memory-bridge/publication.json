@@ -1,0 +1,23 @@
+{
+  "purpose": "Proposed additive disposable browser rehearsal; publication is not authorized",
+  "memoryBridgeSource": "a0aa76df1e67e019c4711aa7414c6204469bab56",
+  "publishingBase": "eaacb379fc32fe88b58cad272889d86acb3579b5",
+  "proposedPrefix": "preview/a0aa76d/",
+  "proposedEntry": "preview/a0aa76d/acceptance/memory-bridge/index.html",
+  "runtimeFiles": [
+    "oauth.config.json",
+    "memory.mjs",
+    "memory-bridge.mjs",
+    "awake-context.mjs",
+    "project-skills.mjs",
+    "skill-registry.mjs",
+    "recent-journal.mjs",
+    "conversation.mjs",
+    "acceptance/memory-bridge/index.html",
+    "acceptance/memory-bridge/harness.css",
+    "acceptance/memory-bridge/browser.mjs",
+    "acceptance/memory-bridge/harness.mjs"
+  ],
+  "externalRuntime": ["https://accounts.google.com/gsi/client", "https://www.googleapis.com"],
+  "preservation": "Append this prefix only; preserve every pre-existing path and blob. Do not switch Pages source or merge development branches."
+}
