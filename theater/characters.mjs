@@ -1,4 +1,4 @@
-import { portfolioView, appendCharacterReply } from './continuity.mjs';
+import { portfolioView, appendCharacterReply, characterCanSee } from './continuity.mjs';
 import { formatGameReport } from './reports.mjs';
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -6,6 +6,21 @@ const nonblank = (value, max) => typeof value === 'string' && value.trim().lengt
 async function fingerprint(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+export function automaticCharacterEvidence(play) {
+  const { events } = portfolioView(play, 'game');
+  const evidence = [];
+  for (const event of events) {
+    if (characterCanSee(event, 'rias', events)) evidence.push({ sourceId: event.id, text: event.text });
+    else {
+      // Do not widen a formerly approved excerpt to the whole source event.
+      const approved = events.filter(e => e.speaker?.id === 'rias' && e.provenance?.origin === 'manually_supplied_model_proposal')
+        .flatMap(e => e.provenance.sourceReferences).filter(ref => ref.sourceId === event.id);
+      for (const ref of approved) if (!evidence.some(item => item.sourceId === event.id && item.text === ref.excerpt))
+        evidence.push({ sourceId: event.id, text: ref.excerpt });
+    }
+  }
+  return evidence;
 }
 export function createCharacterRehearsal() {
   let projection, contextKey, approval, attempt, proposal, generation = 0;

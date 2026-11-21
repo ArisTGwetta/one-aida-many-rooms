@@ -1,10 +1,10 @@
-import { portfolioView, validateCharacterEvent } from './continuity.mjs';
+import { portfolioView, validateCharacterEvent, validateVisibility, eventAttribution } from './continuity.mjs';
 const layers = ['long', 'short', 'recent'];
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 function validateInputs(projection, header, game) {
   if (!exact(header, ['playId', 'playSchema', 'verifiedRevision', 'unsavedChanges', 'pendingRestore']) ||
-      !['theater-play@1', 'theater-play@2', 'theater-play@3'].includes(header.playSchema) ||
+      !['theater-play@1', 'theater-play@2', 'theater-play@3', 'theater-play@4'].includes(header.playSchema) ||
       !Number.isInteger(header.verifiedRevision) || header.verifiedRevision < 0 ||
       typeof header.unsavedChanges !== 'boolean' || typeof header.pendingRestore !== 'boolean' ||
       !exact(projection, ['playId', 'portfolio', 'events']) || projection.playId !== header.playId ||
@@ -14,7 +14,8 @@ function validateInputs(projection, header, game) {
   for (const event of projection.events) {
     const keys = ['id', 'playId', 'sequence', 'timestamp', 'scope', 'text'];
     if (!game) keys.push('branchStatus');
-    if (header.playSchema === 'theater-play@3' && Object.hasOwn(event, 'speaker')) keys.push('speaker', 'provenance');
+    if (['theater-play@3', 'theater-play@4'].includes(header.playSchema) && Object.hasOwn(event, 'speaker')) keys.push('speaker', 'provenance');
+    if (header.playSchema === 'theater-play@4' && Object.hasOwn(event, 'visibility')) { keys.push('visibility', 'turnId'); validateVisibility(event); }
     if (!exact(event, keys) || event.playId !== header.playId || typeof event.text !== 'string' ||
         (game ? event.scope !== 'game' : !['accepted', 'discarded', 'backstage'].includes(event.branchStatus)))
       throw Error('Invalid Theater report event projection.');
@@ -51,8 +52,8 @@ function formatProjection(projection, header, audience) {
   for (const event of projection.events) {
     lines.push('', `Source ID: ${event.id}`, `Timestamp: ${event.timestamp}`,
       `Audience: ${event.scope.toUpperCase()}`, `Branch status: ${audience === 'GAME' ? 'accepted active GAME canon' : event.branchStatus}`,
-      event.speaker ? 'Speaker: Rias — manually supplied model proposal; accepted by Francisco.' : 'Submitted by: Francisco (user-entered event)',
-      ...(event.speaker ? ['Provider/model identity: unverified.', 'Acceptance provenance: ' + JSON.stringify(event.provenance)] : []), event.text);
+      event.speaker ? 'Speaker: ' + eventAttribution(event).speaker + ' — ' + eventAttribution(event).origin + '; accepted by ' + eventAttribution(event).acceptedBy : 'Submitted by: Francisco (user-entered event)',
+      ...(event.speaker ? [event.provenance.origin === 'supervised_provider_turn' ? 'Provider/model route: ' + event.provenance.provider + '/' + event.provenance.model : 'Provider/model identity: unverified.', 'Acceptance provenance: ' + JSON.stringify(event.provenance)] : []), event.text);
   }
   return lines.join('\n');
 }

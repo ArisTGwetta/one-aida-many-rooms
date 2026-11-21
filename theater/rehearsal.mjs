@@ -1,4 +1,4 @@
-import { validateCharacterEvent, eventAttribution } from './continuity.mjs';
+import { validateCharacterEvent, validateVisibility, eventAttribution } from './continuity.mjs';
 import { formatGameReport } from './reports.mjs';
 const layers = ['long', 'short'];
 const packets = new WeakMap();
@@ -13,7 +13,7 @@ async function digest(value) {
 }
 function evidenceInput(projection, audience, metadata) {
   if (!['game', 'meta'].includes(audience) || !exact(metadata, ['playSchema', 'verifiedRevision', 'unsavedChanges', 'pendingRestore']) ||
-      !['theater-play@1', 'theater-play@2', 'theater-play@3'].includes(metadata.playSchema) ||
+      !['theater-play@1', 'theater-play@2', 'theater-play@3', 'theater-play@4'].includes(metadata.playSchema) ||
       !Number.isInteger(metadata.verifiedRevision) || metadata.verifiedRevision < 0 ||
       typeof metadata.unsavedChanges !== 'boolean' || typeof metadata.pendingRestore !== 'boolean' ||
       !exact(projection, ['playId', 'portfolio', 'events']) || typeof projection.playId !== 'string' ||
@@ -22,7 +22,8 @@ function evidenceInput(projection, audience, metadata) {
   const evidence = projection.events.map(event => {
     const keys = ['id', 'playId', 'sequence', 'timestamp', 'scope', 'text'];
     if (audience === 'meta') keys.push('branchStatus');
-    if (metadata.playSchema === 'theater-play@3' && Object.hasOwn(event, 'speaker')) keys.push('speaker', 'provenance');
+    if (['theater-play@3', 'theater-play@4'].includes(metadata.playSchema) && Object.hasOwn(event, 'speaker')) keys.push('speaker', 'provenance');
+    if (metadata.playSchema === 'theater-play@4' && Object.hasOwn(event, 'visibility')) { keys.push('visibility', 'turnId'); validateVisibility(event); }
     if (!exact(event, keys) || event.playId !== projection.playId || !text(event.id, 64) || !text(event.text, 2000) ||
         !['meta', 'game'].includes(event.scope) || typeof event.timestamp !== 'string' || !Number.isFinite(Date.parse(event.timestamp)) ||
         (audience === 'game' ? event.scope !== 'game' : !['accepted', 'backstage', 'discarded'].includes(event.branchStatus)))

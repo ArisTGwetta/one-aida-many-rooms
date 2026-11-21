@@ -4,14 +4,123 @@ import { buildMemoryReport } from './reports.mjs';
 import { playerAction, proposeRestore, commitRestore } from './restore.mjs';
 import { plays, finishVisit } from './contracts.mjs';
 import { emptyPlay, appendEvent, setEntry, portfolioView, upgradePlay, eventAttribution } from './continuity.mjs';
-export function setupTheater({ registry, storage }) {
+import { beginTurn, createTurnRunner } from './turns.mjs';
+import { createRoleRouter, defaultTurnPolicy, validateTurnPolicy } from './providers.mjs';
+import { spendingView } from './ledger.mjs';
+export function setupTheater({ registry, storage, provider }) {
   const el = id => document.getElementById(id);
   const button = el('theater-open');
   if (button.dataset.ready) return;
   button.dataset.ready = 'true';
   button.disabled = false;
   let entry, play, revision = 0, visitId, resumeRef = null, pending, busy = false, dirty = false;
+  let automatic = false, policy = defaultTurnPolicy(), sessionId = crypto.randomUUID();
+  const sessionDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  let sessionDate = sessionDay();
+  let runner, router, generating = false, draftScope = el('theater-scope').value || 'meta';
+  const drafts = { meta: '', game: '' };
   const status = text => { el('theater-status').textContent = text; };
+  el('theater-policy').value = JSON.stringify(policy, null, 2);
+  const hasPendingTurn = () => runner?.current()?.status === 'pending';
+  function currentSession() {
+    if (sessionDate !== sessionDay()) { sessionDate = sessionDay(); sessionId = crypto.randomUUID(); router?.beginSession(sessionId); }
+    return sessionId;
+  }
+  function ensureRunner() {
+    if (!provider || !['loadWork', 'saveWork', 'loadLedger', 'appendLedger'].every(method => typeof storage[method] === 'function'))
+      throw Error('The supervised provider/storage bridge is unavailable. Manual mode remains available.');
+    if (!runner) {
+      router = createRoleRouter({ transport: provider.call, inventory: provider.inventory, available: provider.available, operations: storage });
+      runner = createTurnRunner({ storage, router, onState: paintTurn });
+    }
+  }
+  function paintTurn() {
+    const work = runner?.current();
+    el('theater-stop').hidden = !generating;
+    el('theater-pending').hidden = work?.status !== 'pending';
+    el('theater-pending-data').textContent = work?.status === 'pending' ? JSON.stringify({
+      turnId: work.turnId, completed: work.completed, attempts: work.attempts.length,
+      contributions: work.staged.events.filter(event => event.turnId === work.turnId).map(event => ({ speaker: eventAttribution(event).speaker, text: event.text }))
+    }, null, 2) : '';
+    if (work?.status === 'pending') document.querySelector('#theater-room .theater-backstage').open = true;
+    for (const name of ['theater-resume-turn', 'theater-retry-uncertain', 'theater-partial-turn', 'theater-discard-turn'])
+      el(name).disabled = busy || !hasPendingTurn();
+    el('theater-retell').disabled = busy || !automatic || dirty || hasPendingTurn() || !play?.checkpoints?.length || el('theater-scope').value !== 'game';
+    for (const name of ['theater-auto', 'theater-policy-apply', 'theater-unlock', 'theater-inventory', 'theater-reset-routes', 'theater-new-session'])
+      el(name).disabled = busy;
+    el('theater-input-kind').disabled = busy || !automatic;
+  }
+  function useSavedTurn(saved) {
+    play = saved.snapshot; revision = saved.revision; resumeRef = `theater:${play.playId}:${revision}`; dirty = false;
+    const work = runner.current(), submitted = work?.staged.events.find(event => event.turnId === work.turnId && !event.speaker)?.text;
+    if (el('theater-text').value.trim() === submitted) el('theater-text').value = '';
+    drafts[draftScope] = el('theater-text').value;
+    status('Turn saved and verified at revision ' + revision + '.');
+  }
+  async function runTurn(retryUncertain = false) {
+    generating = true; status('Generating the supervised turn. The previous verified scene remains intact until save/readback.'); paintTurn();
+    try { useSavedTurn(await runner.run(policy, { retryUncertain, sessionId: currentSession() })); }
+    finally { generating = false; paintTurn(); }
+  }
+  async function sendTurn(retell = false) {
+    ensureRunner();
+    if (dirty || pending) throw Error('Save or resolve existing local work before a supervised turn.');
+    if (hasPendingTurn()) throw Error('Resume or discard the existing pending turn.');
+    if (retell && !confirm('Generate a replacement for the last action? The verified scene remains intact until the replacement is saved.')) return;
+    const work = beginTurn(play, revision, el('theater-scope').value, el('theater-text').value, currentSession(), el('theater-input-kind').value || 'speech', retell);
+    await runner.start(work); await runTurn();
+  }
+  el('theater-auto').addEventListener('change', () => task(async () => {
+    if (hasPendingTurn() && !el('theater-auto').checked) { el('theater-auto').checked = true; throw Error('Resolve the pending turn before manual mode.'); }
+    if (el('theater-auto').checked) {
+      try { ensureRunner(); if (play) await runner.recover(play.playId); automatic = true; }
+      catch (error) { el('theater-auto').checked = false; throw error; }
+    } else automatic = false;
+    status(automatic ? 'Supervised turns enabled. Review routes, disclosure and budgets before Send. New GAME Sends are player-action boundaries.' : 'Manual mode. No provider generation.');
+  }));
+  el('theater-policy-apply').addEventListener('click', () => task(async () => {
+    let next; try { next = JSON.parse(el('theater-policy').value); } catch { throw Error('Configuration is not valid JSON.'); }
+    policy = structuredClone(validateTurnPolicy(next)); router?.reset();
+    status('Separate GAME/META lineups validated. No generation or audition performed.');
+  }));
+  el('theater-unlock').addEventListener('click', () => task(async () => {
+    const code = el('theater-unlock-code').value; el('theater-unlock-code').value = '';
+    try { ensureRunner(); await provider.unlock(el('theater-unlock-provider').value || 'openai', code); }
+    catch { throw Error('Existing private provider route unavailable. Check Drive authorization, route code and owned credential file. No credential was copied or created.'); }
+    router.reset(); status('Existing route unlocked in browser memory only.');
+  }));
+  el('theater-inventory').addEventListener('click', () => task(async () => {
+    ensureRunner(); const results = [], seen = new Set();
+    for (const route of [...policy.game, ...policy.meta]) {
+      const key = JSON.stringify([route.provider, route.endpoint]); if (seen.has(key)) continue; seen.add(key);
+      try { results.push({ provider: route.provider, endpoint: route.endpoint, installedOrAccountModels: await provider.inventory(route) }); }
+      catch { results.push({ provider: route.provider, status: 'inventory_unavailable' }); }
+    }
+    router.reset(); el('theater-inventories').textContent = JSON.stringify(results, null, 2); status('Read-only inventories checked. No model generation.');
+  }));
+  el('theater-reset-routes').addEventListener('click', () => { if (!busy) { router?.reset(); status('Session provider preferences reset to configured order.'); } });
+  el('theater-new-session').addEventListener('click', () => {
+    if (busy || hasPendingTurn()) { status('Resolve the pending turn first.'); return; }
+    sessionId = crypto.randomUUID(); sessionDate = sessionDay(); router?.beginSession(sessionId); status('New session. Configured preferred providers restored; durable spending history retained.');
+  });
+  el('theater-stop').addEventListener('click', () => { runner?.stop(); status('Stopping generation. Completed work is retained; remote cancellation cannot be guaranteed.'); });
+  el('theater-resume-turn').addEventListener('click', () => task(() => runTurn()));
+  el('theater-retry-uncertain').addEventListener('click', () => task(async () => {
+    if (confirm('The previous request may have incurred a charge. Explicitly retry only unfinished work within the remaining attempt budget?')) await runTurn(true);
+  }));
+  el('theater-partial-turn').addEventListener('click', () => task(async () => {
+    if (confirm('Accept and save only the validated completed fictional work?')) useSavedTurn(await runner.commit(true));
+  }));
+  el('theater-discard-turn').addEventListener('click', () => task(async () => { await runner.discard(); status('Pending turn discarded. Previous verified scene retained.'); }));
+  el('theater-retell').addEventListener('click', () => task(() => sendTurn(true)));
+  el('theater-spending-refresh').addEventListener('click', () => task(async () => {
+    if (!play) throw Error('Choose a play first.'); ensureRunner();
+    currentSession();
+    el('theater-spending').textContent = JSON.stringify({ sessionId, preferences: router.preferences(), ...spendingView(await storage.loadLedger(play.playId), {
+      playId: play.playId, sessionId, scope: el('theater-spending-scope').value || 'session', period: el('theater-spending-period').value || 'all-time'
+    }) }, null, 2);
+    status('Operational ledger displayed only here, never supplied to narrative roles. Global Aida accounting remains separate.');
+  }));
   const reportButtons = ['meta', 'game'].map(audience => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -267,17 +376,17 @@ export function setupTheater({ registry, storage }) {
     const timeline = el('theater-timeline');
     const following = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 40;
     timeline.replaceChildren();
-    for (const event of play ? portfolioView(play, 'meta').events : []) {
+    for (const event of play ? portfolioView(play, 'meta').events.filter(event => !automatic || !gameAudience || event.scope === 'game' && event.branchStatus === 'accepted') : []) {
       const item = document.createElement('article');
       item.dataset.audience = event.scope;
       const label = document.createElement('strong');
       const attribution = eventAttribution(event);
-      label.textContent = (event.speaker ? 'Rias · manually supplied model proposal · accepted by Francisco · ' : 'Francisco · submitted by user · ') + (event.scope === 'game' ? 'GAME / Onstage · ' + event.branchStatus : 'META / Backstage');
+      label.textContent = (event.speaker ? attribution.speaker + ' · ' + attribution.origin + ' · accepted by ' + attribution.acceptedBy + ' · ' : 'Francisco · submitted by user · ') + (event.scope === 'game' ? 'GAME / Onstage · ' + event.branchStatus : 'META / Backstage');
       const text = document.createElement('p');
       text.textContent = event.text;
       const portrait = document.createElement('span');
       portrait.className = 'theater-portrait';
-      portrait.textContent = event.speaker ? 'R' : 'F';
+      portrait.textContent = event.speaker ? attribution.speaker === 'Rias' ? 'R' : 'A' : 'F';
       portrait.setAttribute('aria-label', attribution.speaker);
       const message = document.createElement('div');
       message.append(label, text);
@@ -290,6 +399,12 @@ export function setupTheater({ registry, storage }) {
     el('theater-save').disabled = busy || !play;
     el('theater-play').disabled = busy || Boolean(pending) || dirty;
     el('theater-recover').disabled = busy || !entry?.playId || dirty;
+    if (hasPendingTurn()) {
+      for (const name of ['theater-add', 'theater-save', 'theater-entry-add', 'theater-play', 'theater-restore-last', 'theater-restore-previous']) el(name).disabled = true;
+      for (const { button } of characterActions) button.disabled = true;
+    }
+    el('theater-scope').disabled = busy || hasPendingTurn();
+    paintTurn();
   }
   async function task(action) {
     if (busy) return;
@@ -312,6 +427,7 @@ export function setupTheater({ registry, storage }) {
     play = next; revision = saved?.revision ?? 0;
     resumeRef = saved ? `theater:${entry.playId}:${revision}` : null;
     pending = undefined;
+    if (provider && typeof storage.loadWork === 'function') { ensureRunner(); await runner.recover(entry.playId); }
     status(saved ? `Recovered verified Theater revision ${revision}.` : 'No saved play found. Empty portfolios are ready; Save creates the first snapshot.');
   }
   el('theater-play').addEventListener('change', () => task(async () => {
@@ -327,6 +443,7 @@ export function setupTheater({ registry, storage }) {
     await recover();
   }));
   el('theater-add').addEventListener('click', () => task(async () => {
+    if (automatic) { await sendTurn(); return; }
     const beginsTurn = el('theater-scope').value === 'game' && el('theater-player-action').checked;
     const current = upgradePlay(play);
     play = beginsTurn ? playerAction(current, el('theater-text').value) :
@@ -342,7 +459,11 @@ export function setupTheater({ registry, storage }) {
     el('theater-entry-text').value = ''; status('Portfolio entry added locally with source references.');
   }));
   el('theater-portfolio').addEventListener('change', render);
-  el('theater-scope').addEventListener('change', render);
+  el('theater-scope').addEventListener('change', () => {
+    drafts[draftScope] = el('theater-text').value;
+    draftScope = el('theater-scope').value;
+    el('theater-text').value = drafts[draftScope] ?? ''; render();
+  });
   el('theater-save').addEventListener('click', () => task(async () => {
     pending ??= { operationId: crypto.randomUUID(), snapshot: structuredClone(play), revision };
     const saved = pending.kind === 'restore' ? await commitRestore(storage, entry.playId, pending) :

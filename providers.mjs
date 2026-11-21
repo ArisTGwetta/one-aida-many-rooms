@@ -194,3 +194,89 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
     return { ...result, provider };
   };
 }
+
+// Generic bounded transport. Callers own role contracts; no Aida memory is assembled here.
+export function createStructuredTransport({ keyFor, fetchRequest = fetch } = {}) {
+  return async ({ provider, model, endpoint, input, contract, signal }) => {
+    if (!['openai', 'ollama', 'xai'].includes(provider) || typeof model !== 'string' || !/^[\w][\w.:/-]{0,119}$/.test(model) ||
+        !contract || typeof contract.instructions !== 'string' || !contract.schema ||
+        !Number.isInteger(contract.maxTokens) || contract.maxTokens < 1 || contract.maxTokens > 900)
+      throw Object.assign(new Error('Invalid structured request.'), { code: 'request_invalid', dispatched: false });
+    if (signal?.aborted) throw Object.assign(new Error('Generation stopped.'), { code: 'stopped', dispatched: false });
+    const content = JSON.stringify(input);
+    if (new TextEncoder().encode(JSON.stringify({ content, contract })).length > maxEnvelopeBytes)
+      throw Object.assign(new Error('Structured request exceeds its bound.'), { code: 'request_too_large', dispatched: false });
+    let url, body;
+    const headers = { 'Content-Type': 'application/json' };
+    if (provider === 'ollama') {
+      const local = new URL(ollamaURL(endpoint));
+      if (local.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(local.hostname))
+        throw Object.assign(new Error('Use trusted HTTPS or loopback Ollama.'), { code: 'endpoint_invalid', dispatched: false });
+      url = local.href;
+      body = { model, stream: false, format: contract.schema, messages: [{ role: 'system', content: contract.instructions }, { role: 'user', content }],
+        options: { num_ctx: 8192, num_predict: contract.maxTokens } };
+    } else {
+      const key = await keyFor?.(provider);
+      if (!key) throw Object.assign(new Error('Unlock the existing provider credential first.'), { code: 'credential_unavailable', dispatched: false });
+      headers.Authorization = 'Bearer ' + key;
+      if (provider === 'openai') {
+        url = 'https://api.openai.com/v1/responses';
+        body = { model, store: false, instructions: contract.instructions, input: content, max_output_tokens: contract.maxTokens,
+          reasoning: { effort: 'none' }, text: { format: { type: 'json_schema', name: 'scoped_reply_v1', strict: true, schema: contract.schema } } };
+      } else {
+        url = 'https://api.x.ai/v1/chat/completions';
+        body = { model, messages: [{ role: 'system', content: contract.instructions }, { role: 'user', content }], max_tokens: contract.maxTokens,
+          response_format: { type: 'json_schema', json_schema: { name: 'scoped_reply_v1', strict: true, schema: contract.schema } } };
+      }
+    }
+    const controller = new AbortController();
+    const stop = () => controller.abort(); signal?.addEventListener('abort', stop, { once: true });
+    const timer = setTimeout(stop, 45000);
+    try {
+      if (signal?.aborted) throw Object.assign(new Error('Generation stopped.'), { code: 'stopped', dispatched: false });
+      let response;
+      try { response = await fetchRequest(url, { method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal }); }
+      catch { throw Object.assign(new Error('Provider outcome is uncertain.'), { code: signal?.aborted ? 'stopped_uncertain' : 'transport_uncertain', dispatched: true }); }
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw Object.assign(new Error('Provider request failed.'), { code: 'provider_http', status: response.status, dispatched: true });
+      }
+      let data;
+      try { data = await response.json(); } catch { throw Object.assign(new Error('Provider returned unreadable data.'), { code: 'provider_json', dispatched: true }); }
+      const usage = provider === 'openai' ? openAIUsage(data.usage) : provider === 'xai' ?
+        (Number.isSafeInteger(data.usage?.prompt_tokens) && Number.isSafeInteger(data.usage?.completion_tokens)
+          ? { inputTokens: data.usage.prompt_tokens, outputTokens: data.usage.completion_tokens, estimatedUsd: null } : null) :
+        (Number.isSafeInteger(data.prompt_eval_count) && Number.isSafeInteger(data.eval_count)
+          ? { inputTokens: data.prompt_eval_count, outputTokens: data.eval_count, estimatedUsd: 0 } : null);
+      const parts = (data.output ?? []).filter(part => part.type === 'message').flatMap(part => part.content ?? []);
+      const refusal = provider === 'openai' ? parts.some(part => part.type === 'refusal') : Boolean(data.choices?.[0]?.message?.refusal);
+      if (refusal) throw Object.assign(new Error('Provider declined this request.'), { code: 'provider_refusal', usage, dispatched: true });
+      const raw = provider === 'openai' ? parts.filter(part => part.type === 'output_text').map(part => part.text).join('') :
+        provider === 'xai' ? data.choices?.[0]?.message?.content : data.message?.content;
+      const complete = provider === 'openai' ? data.status === 'completed' : provider === 'ollama' ? data.done === true && data.done_reason !== 'length' : data.choices?.[0]?.finish_reason === 'stop';
+      if (!complete || typeof raw !== 'string' || !raw.trim() || raw.length > 12000)
+        throw Object.assign(new Error('Provider reply incomplete.'), { code: 'provider_incomplete', usage, dispatched: true });
+      return { raw, provider, model: typeof data.model === 'string' && /^[\w][\w.:/-]{0,119}$/.test(data.model) ? data.model : model, usage };
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', stop); }
+  };
+}
+export async function listLocalModels(endpoint, fetchRequest = fetch) {
+  const url = new URL(ollamaURL(endpoint));
+  if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw Error('Use HTTPS or loopback for local inventory.');
+  url.pathname = '/api/tags';
+  const response = await fetchRequest(url.href, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw Error('Ollama inventory unavailable.');
+  const data = await response.json();
+  if (!Array.isArray(data.models) || data.models.length > 200) throw Error('Invalid Ollama inventory.');
+  return data.models.map(item => item.name).filter(name => typeof name === 'string' && /^[\w][\w.:/-]{0,119}$/.test(name));
+}
+export async function listHostedModels(provider, key, fetchRequest = fetch) {
+  if (!['openai', 'xai'].includes(provider) || !key) throw Error('Unlock the existing provider first.');
+  const response = await fetchRequest(provider === 'openai' ? 'https://api.openai.com/v1/models' : 'https://api.x.ai/v1/models', {
+    headers: { Authorization: 'Bearer ' + key }, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000)
+  });
+  if (!response.ok) throw Error('Authorized model inventory unavailable.');
+  const data = await response.json();
+  if (!Array.isArray(data.data) || data.data.length > 2000) throw Error('Invalid model inventory.');
+  return data.data.map(item => item.id).filter(id => typeof id === 'string' && /^[\w][\w.:/-]{0,119}$/.test(id));
+}

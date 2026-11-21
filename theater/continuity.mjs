@@ -27,6 +27,7 @@ function validActive(ids, events) {
 }
 export function validateCharacterEvent(event, events) {
   const provenance = event.provenance;
+  if (provenance?.origin === 'supervised_provider_turn') return validateGeneratedEvent(event, events);
   if (!exact(event.speaker, ['id', 'kind']) || event.speaker.id !== 'rias' || event.speaker.kind !== 'character' || event.scope !== 'game' ||
       !exact(provenance, ['origin', 'attemptId', 'packetFingerprint', 'sourceReferences', 'acceptedBy', 'acceptedAt', 'verifiedRevision']) ||
       provenance.origin !== 'manually_supplied_model_proposal' || !identifier(provenance.attemptId) ||
@@ -48,23 +49,28 @@ export function validateCharacterEvent(event, events) {
   }
 }
 export function eventAttribution(event) {
+  if (event.provenance?.origin === 'supervised_provider_turn') return {
+    speaker: event.speaker.id === 'rias' ? 'Rias' : 'Aida', origin: 'supervised_provider_turn', acceptedBy: 'Francisco’s turn authorization'
+  };
   return event.speaker ? { speaker: 'Rias', origin: 'manually_supplied_model_proposal', acceptedBy: 'Francisco' } :
     { speaker: 'Francisco', origin: 'user_entered', acceptedBy: null };
 }
 export function validatePlay(play) {
-  const v2 = ['theater-play@2', 'theater-play@3'].includes(play?.schema);
+  const v2 = ['theater-play@2', 'theater-play@3', 'theater-play@4'].includes(play?.schema);
   const keys = ['schema', 'playId', 'events', 'meta', 'game'];
   if (v2) keys.push('branchId', 'activeGameIds', 'checkpoints');
-  if (!exact(play, keys) || !['theater-play@1', 'theater-play@2', 'theater-play@3'].includes(play.schema) ||
+  if (!exact(play, keys) || !['theater-play@1', 'theater-play@2', 'theater-play@3', 'theater-play@4'].includes(play.schema) ||
       !plays.some(p => p.id === play.playId) || !Array.isArray(play.events) || play.events.length > 500) throw Error('Invalid play envelope.');
   const ids = new Set(), attempts = new Set();
   for (const e of play.events) {
     const fields = ['id', 'playId', 'sequence', 'timestamp', 'scope', 'text'];
-    if (play.schema === 'theater-play@3' && Object.hasOwn(e, 'speaker')) fields.push('speaker', 'provenance');
+    if (['theater-play@3', 'theater-play@4'].includes(play.schema) && Object.hasOwn(e, 'speaker')) fields.push('speaker', 'provenance');
+    if (play.schema === 'theater-play@4' && Object.hasOwn(e, 'visibility')) fields.push('visibility', 'turnId');
     if (!exact(e, fields) || !identifier(e.id) || ids.has(e.id) ||
         e.playId !== play.playId || e.sequence !== ids.size + 1 || !['meta', 'game'].includes(e.scope) ||
         typeof e.timestamp !== 'string' || !Number.isFinite(Date.parse(e.timestamp)) ||
         typeof e.text !== 'string' || !e.text.trim() || e.text.length > 2000) throw Error('Invalid play source event.');
+    if (Object.hasOwn(e, 'visibility')) validateVisibility(e);
     if (Object.hasOwn(e, 'speaker')) {
       validateCharacterEvent(e, play.events);
       if (attempts.has(e.provenance.attemptId)) throw Error('Character attempt was already accepted.');
@@ -132,10 +138,67 @@ export function portfolioView(play, scope) {
 
 export function appendCharacterReply(play, dialogue, provenance, eventId = crypto.randomUUID()) {
   const upgraded = upgradePlay(play);
-  upgraded.schema = 'theater-play@3';
+  if (upgraded.schema !== 'theater-play@4') upgraded.schema = 'theater-play@3';
   const next = appendEvent(upgraded, 'game', dialogue, eventId, provenance.acceptedAt);
   const event = next.events.at(-1);
   event.speaker = { id: 'rias', kind: 'character' };
   event.provenance = structuredClone(provenance);
   return validatePlay(next);
+}
+
+export function validateVisibility(event) {
+  if (!identifier(event.turnId) || !exact(event.visibility, ['kind', 'recipients']) ||
+      !['speech', 'observable_action', 'private_thought', 'narration', 'backstage'].includes(event.visibility.kind) ||
+      !Array.isArray(event.visibility.recipients) || new Set(event.visibility.recipients).size !== event.visibility.recipients.length ||
+      event.visibility.recipients.some(id => !['rias', 'aida'].includes(id)) ||
+      (event.scope === 'meta' ? event.visibility.kind !== 'backstage' || event.visibility.recipients.join() !== 'aida' :
+        event.visibility.kind === 'backstage' || event.visibility.kind === 'private_thought' && event.visibility.recipients.length))
+    throw Error('Invalid event visibility.');
+}
+function validateGeneratedEvent(event, events) {
+  const p = event.provenance;
+  validateVisibility(event);
+  if (!exact(event.speaker, ['id', 'kind']) || !['rias', 'aida'].includes(event.speaker.id) ||
+      event.speaker.kind !== (event.speaker.id === 'rias' ? 'character' : event.scope === 'game' ? 'narrator' : 'companion') ||
+      (event.speaker.id === 'rias' && event.scope !== 'game') ||
+      !exact(p, ['origin', 'attemptId', 'sourceReferences', 'acceptedBy', 'acceptedAt', 'provider', 'model']) ||
+      !identifier(p.attemptId) || p.acceptedBy !== 'francisco_turn_authorization' || p.acceptedAt !== event.timestamp ||
+      !['openai', 'ollama', 'xai'].includes(p.provider) || typeof p.model !== 'string' || !/^[\w][\w.:/-]{0,119}$/.test(p.model) ||
+      !Array.isArray(p.sourceReferences) || !p.sourceReferences.length || p.sourceReferences.length > 40)
+    throw Error('Invalid generated fictional event provenance.');
+  const seen = new Set();
+  for (const ref of p.sourceReferences) {
+    const source = events.find(e => e.id === ref?.sourceId);
+    if (!exact(ref, ['alias', 'sourceId', 'excerpt']) || !/^e[1-9][0-9]*$/.test(ref.alias) || seen.has(ref.alias) ||
+        !source || source.sequence >= event.sequence || typeof ref.excerpt !== 'string' || !ref.excerpt.trim() || !source.text.includes(ref.excerpt) ||
+        (event.scope === 'game' && source.scope !== 'game')) throw Error('Invalid generated source evidence.');
+    if (event.speaker.id === 'rias' && !characterCanSee(source, 'rias', events) && !events.some(e =>
+      e.sequence < event.sequence && e.speaker?.id === 'rias' && e.provenance?.origin === 'manually_supplied_model_proposal' &&
+      e.provenance.sourceReferences.some(approved => approved.sourceId === ref.sourceId && approved.excerpt.includes(ref.excerpt))))
+      throw Error('Character source is not authorized.');
+    if (event.speaker.kind === 'narrator' && !source.visibility?.recipients.includes('aida')) throw Error('Narrator source is not observable.');
+    seen.add(ref.alias);
+  }
+}
+// Legacy GAME text is not automatically character knowledge. Only explicitly approved
+// legacy excerpts and the character's own accepted utterances can seed that view.
+export function characterCanSee(event, characterId, activeEvents) {
+  if (event.scope !== 'game') return false;
+  if (event.speaker?.id === characterId) return true;
+  return Boolean(event.visibility?.recipients.includes(characterId));
+}
+export function appendGenerated(play, context, fiction, references, receipt, turnId) {
+  if (!['game_character', 'game_narrator', 'meta_aida'].includes(context)) throw Error('Unknown generated contribution role.');
+  if (fiction.decision === 'silent') return validatePlay(structuredClone(play));
+  const next = upgradePlay(play); next.schema = 'theater-play@4';
+  const scope = context === 'meta_aida' ? 'meta' : 'game';
+  const added = appendEvent(next, scope, fiction.text, receipt.attemptId, receipt.timestamp);
+  const event = added.events.at(-1);
+  event.turnId = turnId;
+  event.visibility = { kind: scope === 'meta' ? 'backstage' : context === 'game_character' ? 'speech' : 'narration',
+    recipients: scope === 'meta' ? ['aida'] : ['rias', 'aida'] };
+  event.speaker = { id: context === 'game_character' ? 'rias' : 'aida', kind: context === 'game_character' ? 'character' : scope === 'game' ? 'narrator' : 'companion' };
+  event.provenance = { origin: 'supervised_provider_turn', attemptId: receipt.attemptId, sourceReferences: references,
+    acceptedBy: 'francisco_turn_authorization', acceptedAt: receipt.timestamp, provider: receipt.provider, model: receipt.model };
+  return validatePlay(added);
 }

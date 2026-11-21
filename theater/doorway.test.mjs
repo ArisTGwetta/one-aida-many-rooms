@@ -64,10 +64,10 @@ test('room navigation selects and recovers a play without host conversation acce
     assert.ok(requests.every(request => Object.keys(request.context).length === 0));
   } finally { globalThis.document = previous; }
 });
-test('Theater modules have no provider, persistence or everyday memory dependencies', () => {
+test('Theater doorway has no direct transport, browser persistence or shared memory dependencies', () => {
   for (const name of ['app.mjs', 'capability.mjs', 'contracts.mjs']) {
     const source = readFileSync(new URL(name, import.meta.url), 'utf8');
-    assert.doesNotMatch(source, /fetch\(|localStorage|sessionStorage|indexedDB|\.\/memory|\.\/providers|\.\/sleep|\.\/conversation/);
+    assert.doesNotMatch(source, /fetch\(|localStorage|sessionStorage|indexedDB|\.\.\/(?:memory|providers|sleep|conversation)/);
   }
 });
 
@@ -461,5 +461,65 @@ test('accept UI adds one unsaved Rias event, consumes the attempt and preserves 
     assert.equal(node('theater-text').value, 'Unsent Theater draft'); assert.equal(node('message').value, 'Everyday draft');
     conflict = false; await node('theater-save').handlers.click();
     assert.equal(node('theater-unsaved').hidden, true); assert.match(node('theater-status').textContent, /Saved and verified/);
+  } finally { globalThis.document = originalDocument; }
+});
+
+
+test('supervised Send is opt-in, preserves drafts and canonical scene on failure, and exposes Stop and recoverable pending work', async () => {
+  const nodes = new Map();
+  const make = tagName => ({ tagName, dataset: {}, value: '', textContent: '', children: [], handlers: {},
+    append(...children) { this.children.push(...children); }, replaceChildren() { this.children = []; }, setAttribute() {},
+    addEventListener(type, fn) { this.handlers[type] = fn; }, dispatchEvent(event) { this.handlers[event.type]?.(event); } });
+  const node = id => { if (!nodes.has(id)) nodes.set(id, make('node')); return nodes.get(id); };
+  const originalDocument = globalThis.document;
+  globalThis.document = { getElementById: node, querySelector: () => node('backstage'), createElement: make };
+  try {
+    node('theater-scope').value = 'meta'; node('theater-portfolio').value = 'game';
+    let canonical = null, work = null, failNarrator = true, calls = 0, privateWrites = 0;
+    const ledger = [];
+    const storage = {
+      loadPlay: async () => structuredClone(canonical),
+      savePlay: async (_id, revision, snapshot, operationId) => { canonical = { snapshot: structuredClone(snapshot), revision: revision + 1, operationId }; return structuredClone(canonical); },
+      saveWork: async next => { privateWrites++; work = structuredClone(next); },
+      loadWork: async () => work?.status === 'pending' ? structuredClone(work) : null,
+      loadLedger: async () => structuredClone(ledger), appendLedger: async row => { ledger.push(structuredClone(row)); }
+    };
+    setupTheater({ registry: createSkillRegistry([rpgBinding()]), storage, provider: {
+      available: () => true, inventory: async route => [route.model], unlock: async () => {},
+      call: async request => {
+        calls++; assert.equal(node('theater-stop').hidden, false);
+        if (request.input.role === 'game_narrator' && failNarrator) throw Object.assign(Error('PRIVATE_TRANSPORT_DETAILS'), { code: 'provider_http' });
+        return { raw: JSON.stringify({ decision: 'speak', text: 'A fictional reply.', sources: [request.input.evidence.at(-1).alias] }), usage: { inputTokens: 20, outputTokens: 12 } };
+      }
+    } });
+    await node('theater-open').handlers.click(); node('theater-play').value = 'doorway-demo'; await node('theater-play').handlers.change();
+    assert.equal(calls, 0); assert.equal(privateWrites, 0);
+    node('theater-text').value = 'A backstage draft';
+    node('theater-scope').value = 'game'; node('theater-scope').handlers.change(); node('theater-text').value = 'An onstage draft';
+    node('theater-scope').value = 'meta'; node('theater-scope').handlers.change(); assert.equal(node('theater-text').value, 'A backstage draft');
+    node('theater-scope').value = 'game'; node('theater-scope').handlers.change(); assert.equal(node('theater-text').value, 'An onstage draft');
+    const policy = JSON.parse(node('theater-policy').value);
+    policy.cloudConsent = true; policy.game = [policy.game[0]]; policy.game[0].cloudAllowed = true;
+    node('theater-policy').value = JSON.stringify(policy); await node('theater-policy-apply').handlers.click();
+    node('theater-auto').checked = true; await node('theater-auto').handlers.change();
+    node('theater-input-kind').value = 'speech'; node('theater-text').value = 'Hello, Rias.';
+    await node('theater-add').handlers.click();
+    assert.equal(calls, 2); assert.equal(canonical, null); assert.equal(node('theater-text').value, 'Hello, Rias.');
+    assert.equal(node('theater-pending').hidden, false); assert.equal(node('theater-save').disabled, true);
+    assert.match(node('theater-pending-data').textContent, /A fictional reply/);
+    assert.doesNotMatch(node('theater-pending-data').textContent, /PRIVATE_TRANSPORT_DETAILS/);
+    assert.equal(node('theater-stop').hidden, true);
+    failNarrator = false; policy.game.push({ ...policy.game[0], id: 'alternate', model: 'fixture-alternate' });
+    node('theater-policy').value = JSON.stringify(policy); await node('theater-policy-apply').handlers.click();
+    node('theater-text').value = 'My next unsent message';
+    await node('theater-resume-turn').handlers.click();
+    assert.equal(calls, 3); assert.equal(canonical.revision, 1); assert.equal(canonical.snapshot.events.length, 3);
+    assert.equal(node('theater-pending').hidden, true); assert.equal(node('theater-text').value, 'My next unsent message');
+    assert.match(node('theater-status').textContent, /saved and verified/);
+    assert.ok(node('theater-timeline').children.some(item => item.children[1].children[0].textContent.startsWith('Rias')));
+    assert.ok(node('theater-timeline').children.some(item => item.children[1].children[0].textContent.startsWith('Aida')));
+    node('theater-spending-scope').value = 'story'; node('theater-spending-period').value = 'all-time';
+    await node('theater-spending-refresh').handlers.click(); assert.equal(JSON.parse(node('theater-spending').textContent).attempts, 3);
+    assert.doesNotMatch(node('theater-data').textContent, /provider_http|PRIVATE_TRANSPORT_DETAILS/);
   } finally { globalThis.document = originalDocument; }
 });

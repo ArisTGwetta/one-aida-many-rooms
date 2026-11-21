@@ -39,3 +39,9 @@
 #theater-room .theater-portrait { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 2.4rem; width: 2.4rem; height: 2.4rem; border: 1px solid var(--line); border-radius: .5rem; overflow: hidden; font-size: .75rem; }
 #theater-room .theater-portrait img { width: 100%; height: 100%; object-fit: cover; }
 #theater-room .theater-recipient { display: flex; align-items: center; gap: .5rem; font-size: .85rem; }
+#theater-pending { border: 2px dashed var(--line); padding: .5rem; border-radius: .5rem; }
+#theater-stop { border: 2px solid currentColor; font-weight: bold; }
+#theater-policy { width: 100%; font-family: monospace; }
+#theater-pending pre, #theater-spending, #theater-inventories { max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+#theater-room details > button { margin: .25rem; }
+#theater-room button[hidden], #theater-pending[hidden] { display: none; }

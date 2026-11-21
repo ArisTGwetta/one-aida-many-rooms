@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createConversationSession } from "./conversation.mjs";
-import { createProviders, openAIModel } from "./providers.mjs";
+import { createProviders, openAIModel, createStructuredTransport, listLocalModels, listHostedModels } from "./providers.mjs";
 
 const record = { id: "record-1", text: "I take the early ferry on Fridays.", updated_at: "2026-01-01T12:00:00.000Z" };
 const output = envelope => JSON.stringify({
@@ -118,4 +118,44 @@ test("missing memory is explicit in the model input, and invalid responses are r
   assert.match((await session.send("What did I tell you?")).response.reply, /don't have/);
   invalid = true;
   await assert.rejects(session.send("What did I tell you?"), /response validation failed/);
+});
+
+
+const scopedContract = { maxTokens: 100, instructions: 'Synthetic role test.', schema: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } }, required: ['text'] } };
+test('restricted structured transport sends only supplied scoped evidence with fixed hosted routes and bounded schemas', async () => {
+  const requests = [];
+  const invoke = createStructuredTransport({ keyFor: async () => 'synthetic-key', fetchRequest: async (url, init) => {
+    const body = JSON.parse(init.body); requests.push({ url, body });
+    return { ok: true, json: async () => url.includes('openai') ? { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"text":"fixture"}' }] }], usage: { input_tokens: 10, output_tokens: 4 } } :
+      url.includes('x.ai') ? { choices: [{ finish_reason: 'stop', message: { content: '{"text":"fixture"}' } }], usage: { prompt_tokens: 10, completion_tokens: 4 } } :
+        { done: true, message: { content: '{"text":"fixture"}' }, prompt_eval_count: 10, eval_count: 4 } };
+  } });
+  for (const provider of ['openai', 'xai', 'ollama']) {
+    const result = await invoke({ provider, model: 'fixture-model', endpoint: 'http://127.0.0.1:11434', input: { evidence: 'only authorized fixture evidence' }, contract: scopedContract });
+    assert.equal(result.usage.inputTokens, 10); assert.equal(result.usage.outputTokens, 4);
+  }
+  assert.equal(requests[0].url, 'https://api.openai.com/v1/responses'); assert.equal(requests[0].body.store, false);
+  assert.equal(requests[1].url, 'https://api.x.ai/v1/chat/completions'); assert.equal(requests[1].body.response_format.json_schema.strict, true);
+  assert.equal(requests[2].body.options.num_predict, 100);
+  assert.ok(!JSON.stringify(requests).includes('maxLength'));
+  await assert.rejects(invoke({ provider: 'ollama', model: 'fixture', endpoint: 'http://remote.invalid', input: {}, contract: scopedContract }), error => error.dispatched === false);
+  await assert.rejects(invoke({ provider: 'openai', model: 'fixture', input: { text: 'x'.repeat(60000) }, contract: scopedContract }), error => error.code === 'request_too_large');
+});
+test('transport keeps provider refusals and interrupted outcomes out of fictional responses', async () => {
+  const request = { provider: 'openai', model: 'fixture', input: {}, contract: scopedContract };
+  const invoke = createStructuredTransport({ keyFor: () => 'synthetic-key', fetchRequest: async () => ({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'PRIVATE_PROVIDER_REFUSAL' }] }] }) }) });
+  await assert.rejects(invoke(request), error => error.code === 'provider_refusal' && !error.message.includes('PRIVATE_PROVIDER_REFUSAL'));
+  const broken = createStructuredTransport({ keyFor: () => 'synthetic-key', fetchRequest: async () => { throw Error('PRIVATE_NETWORK_DETAILS'); } });
+  await assert.rejects(broken(request), error => error.code === 'transport_uncertain' && !error.message.includes('PRIVATE_NETWORK_DETAILS'));
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(invoke({ ...request, signal: controller.signal }), error => error.code === 'stopped' && error.dispatched === false);
+});
+test('installed/account model inventories are read-only and never audition a model', async () => {
+  const calls = [];
+  const inventory = async (url, options) => { calls.push({ url, options }); return { ok: true, json: async () => url.includes('/api/tags') ? { models: [{ name: 'fixture-mistral:latest' }] } : { data: [{ id: 'fixture-model' }] } }; };
+  assert.deepEqual(await listLocalModels('http://127.0.0.1:11434', inventory), ['fixture-mistral:latest']);
+  assert.deepEqual(await listHostedModels('xai', 'synthetic-key', inventory), ['fixture-model']);
+  assert.ok(calls.every(call => !call.options.method && !call.options.body));
+  assert.equal(calls[0].url, 'http://127.0.0.1:11434/api/tags');
+  await assert.rejects(listHostedModels('other', 'synthetic-key', inventory));
 });

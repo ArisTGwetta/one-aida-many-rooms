@@ -85,7 +85,32 @@ async function setupChat(folderId) {
     uncleChattBinding(() => Boolean(token)), rpgBinding(),
     snailMiniBinding({ getCatalog: createSnailDriveReader(folderId, () => token),
       authorized: () => Boolean(token), cacheKey: () => token })]);
-  setupTheater({ registry: skills, storage: createTheaterStorage(folderId, () => token) });
+  // Restricted Theater bridge: scoped structured packets, credential unlock and model
+  // inventories only. No everyday context, session, memory store or raw credentials.
+  const theaterKeys = new Map(); let theaterAuthorization;
+  function theaterKey(provider) {
+    if (theaterAuthorization !== token) { theaterKeys.clear(); theaterAuthorization = token; }
+    return token ? provider === 'openai' ? browserKey ?? theaterKeys.get(provider) : theaterKeys.get(provider) : undefined;
+  }
+  setupTheater({ registry: skills, storage: createTheaterStorage(folderId, () => token), provider: {
+    available: route => route.provider === 'ollama' || Boolean(theaterKey(route.provider)),
+    async unlock(provider, routeCode) {
+      const credentials = await import('./browser-credentials.mjs');
+      theaterKey(provider);
+      const authorizedToken = token;
+      const key = await credentials.loadProviderKey({ folderId, provider, routeCode, token: authorizedToken });
+      if (!token || authorizedToken !== token) throw Error('Authorization changed; unlock again.');
+      theaterKeys.set(provider, key);
+    },
+    async inventory(route) {
+      const providers = await import('./providers.mjs');
+      return route.provider === 'ollama' ? providers.listLocalModels(route.endpoint) : providers.listHostedModels(route.provider, theaterKey(route.provider));
+    },
+    async call(request) {
+      const providers = await import('./providers.mjs');
+      return providers.createStructuredTransport({ keyFor: theaterKey })(request);
+    }
+  } });
   const chatt = setupUncleChatt({ registry: skills, contextSource, run, recent: () => session?.recentForHandoff() ?? [] });
   const palace = setupMindPalace({ token: () => token, run, contextSource, registry: skills, async suggest(workspace) {
     providerCalls = [];

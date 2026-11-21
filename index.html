@@ -209,6 +209,7 @@
         <button id="theater-restore-last" type="button" hidden>Before my last action</button>
         <button id="theater-restore-previous" type="button" hidden>Before my previous action</button>
         <strong id="theater-unsaved" role="status" hidden>Unsaved changes</strong>
+        <button id="theater-stop" type="button" hidden>Stop generation</button>
       </div>
       <div id="theater-timeline" role="log" aria-label="Play conversation"></div>
       <div class="theater-composer">
@@ -221,7 +222,31 @@
           <button id="theater-add" type="button">Send to META</button></div>
       </div>
       <p id="theater-status" role="status"></p>
+        <section id="theater-pending" hidden aria-label="Pending turn, not yet canonical"><strong>Pending fictional work · previous verified scene remains canonical</strong><pre id="theater-pending-data"></pre>
+          <button id="theater-resume-turn" type="button">Resume completed work</button><button id="theater-retry-uncertain" type="button">Retry uncertain request explicitly</button>
+          <button id="theater-partial-turn" type="button">Accept and save completed partial turn</button><button id="theater-discard-turn" type="button">Discard pending turn</button>
+        </section>
       <details class="theater-backstage"><summary>Backstage / Development</summary>
+        <details><summary>Supervised turn setup and operational spending</summary>
+          <p>Automatic turns are opt-in. Send authorizes the selected fictional contributions and a verified play save. Provider errors never become story memory. One active generation device per play; simultaneous generation is not supported.</p>
+          <label><input id="theater-auto" type="checkbox"> Enable supervised Send → Rias → Aida → verified save</label>
+          <label for="theater-input-kind">Onstage input visibility</label>
+          <select id="theater-input-kind"><option value="speech">Direct speech to Rias (audible to Aida)</option><option value="observable_action">Attempted action visible to Rias and Aida</option><option value="private_thought">Private thought (not character-visible; may need clarification)</option><option value="narration">Public scene narration visible to Rias and Aida</option></select>
+          <label for="theater-policy">Ordered GAME/META routes, disclosure consent, prices and spending limits</label>
+          <textarea id="theater-policy" rows="8" spellcheck="false"></textarea>
+          <button id="theater-policy-apply" type="button">Validate and use configuration</button>
+          <p>Candidate IDs are not proof of availability. Check inventory before selecting the installed Mistral ID. Cloud disclosure requires cloudConsent and cloudAllowed. Unknown prices block hosted routes. Local API charge is zero; computational cost is unmeasured.</p>
+          <label for="theater-unlock-provider">Existing private credential</label><select id="theater-unlock-provider"><option value="openai">OpenAI</option><option value="xai">xAI / Grok</option></select>
+          <label for="theater-unlock-code">Existing three-digit route code (memory only)</label><input id="theater-unlock-code" type="password" inputmode="numeric" maxlength="3" autocomplete="off">
+          <button id="theater-unlock" type="button">Unlock existing route</button>
+          <button id="theater-inventory" type="button">Check configured model inventories (no generation)</button>
+          <pre id="theater-inventories"></pre>
+          <button id="theater-reset-routes" type="button">Reset session provider preferences</button><button id="theater-new-session" type="button">Start new Theater session</button>
+          <label for="theater-spending-scope">Spending scope</label><select id="theater-spending-scope"><option value="session">This session</option><option value="story">Story so far</option></select>
+          <label for="theater-spending-period">Calendar period (America/New_York)</label><select id="theater-spending-period"><option value="all-time">All time</option><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="year">Year</option></select>
+          <button id="theater-spending-refresh" type="button">Read operational spending ledger</button><pre id="theater-spending"></pre>
+        </details>
+        <button id="theater-retell" type="button">Retell last player-action turn using this draft</button>
         <button id="theater-recover" type="button">Recover saved play</button>
         <label for="theater-portfolio">Portfolio</label>
         <select id="theater-portfolio"><option value="meta">META</option><option value="game">GAME</option></select>

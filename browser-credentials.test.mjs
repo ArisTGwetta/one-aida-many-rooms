@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadOpenAIKey } from "./browser-credentials.mjs";
+import { loadOpenAIKey, loadProviderKey } from "./browser-credentials.mjs";
 import { createProviders, openAIModel } from "./providers.mjs";
 import { createConversationSession } from "./conversation.mjs";
 
@@ -68,4 +68,24 @@ test("credential loading fails closed on missing, ambiguous, unauthorized, or mi
   await assert.rejects(loadOpenAIKey("folder", "001", "token", async url =>
     Response.json(url.endsWith("?alt=media") ? fixture : { files: [{ id: "one" }] })
   ), /did not match/);
+});
+
+
+test('Grok reuses existing private PIN segments in the owned folder, with no writes or persistent credential storage', async () => {
+  const requests = [];
+  const options = { folderId: 'owned-folder', provider: 'xai', routeCode: '739', token: 'synthetic-token' };
+  const transport = async (url, init) => {
+    requests.push({ url, init });
+    return { ok: true, json: async () => url.includes('alt=media') ? { routes: { '739': { provider: 'grok', prefix: 'xai-', segments: { '7': 'Fixture', '3': 'Middle', '9': 'Suffix' } } } } : { files: [{ id: 'private-file' }] } };
+  };
+  const key = await loadProviderKey(options, transport);
+  assert.equal(key, ['xai', 'FixtureMiddleSuffix'].join('-'));
+  assert.equal(requests.length, 2);
+  assert.ok(decodeURIComponent(requests[0].url).includes("'owned-folder'+in+parents"));
+  assert.ok(requests.every(r => !r.init.method && r.init.cache === 'no-store' && r.init.redirect === 'error'));
+  await assert.rejects(loadProviderKey({ ...options, routeCode: 'invalid' }, transport));
+  await assert.rejects(loadProviderKey(options, async () => ({ ok: true, json: async () => ({ files: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }) })), /ambiguous/);
+  await assert.rejects(loadProviderKey(options, async url => ({ ok: true, json: async () => url.includes('alt=media') ? { routes: { '739': { provider: 'openai' } } } : { files: [{ id: 'private-file' }] } })), /Exactly one/);
+  const before = requests.length;
+  await assert.rejects(loadProviderKey({ ...options, token: '' }, transport)); assert.equal(requests.length, before);
 });
