@@ -35,7 +35,7 @@ export function attachProjectResult(context, { operation, project, reference }) 
     } : { lookupProject: project }),
     projectRead: { operation, status: operation === "enter" ? "loaded_for_entry" : "looked_up",
       projectId: project.id, reference, sectionCounts: Object.fromEntries(
-        Object.entries(project.continuity).map(([layer, entries]) => [layer, entries.length])) },
+        ['long','short','recent','facts','insights'].map(layer => [layer, project.continuity[layer].length])) },
     references: [...new Set([...context.references, reference])]
   };
 }
@@ -103,6 +103,34 @@ export function projectSkills(source, additionalBindings = []) {
       validateResult: result => ["lookup", "enter"].includes(result?.operation) &&
         typeof result.project?.id === "string" && typeof result.reference === "string" &&
         ["long", "short", "recent", "facts", "insights"].every(layer => Array.isArray(result.project.continuity?.[layer]))
+    },
+    {
+      descriptor: skillDescriptor('find_project',2,'read','Retrieve one registered project seed or its authorized supporting evidence; project data never grants global retention.',[
+        ...findArgs.map(arg=>arg.name==='operation'?{...arg,description:'lookup, enter or evidence'}:arg),
+        {name:'source',description:'Exact supporting source ID for evidence, or null for a bounded evidence page.',required:true,schema:{type:['string','null']}}
+      ]),
+      available: ({projects})=>projects.length>0,
+      validate: input=>input&&Object.keys(input).length===4&&stableId(input.projectId)&&['lookup','enter','evidence'].includes(input.operation)&&
+        bounded(input.evidence,4000)&&(input.source===null||bounded(input.source,150)),
+      authorize: (input,{user,context})=>{
+        const entry=context.projects.find(p=>p.id===input.projectId);
+        if(!entry||!user.text.includes(input.evidence))return false;
+        if(context.projects.filter(p=>names(user.text,p)).some(p=>p.id!==entry.id))throw Error(clarification);
+        if(input.operation==='enter'&&!targetMatches(enterTarget(input.evidence),entry))throw Error('Explicitly name the project you want to enter.');
+        return true;
+      },
+      async run(input,{context}) {
+        if(input.operation==='evidence')return {operation:'evidence',evidence:await source.projectEvidence(input.projectId,input.source)};
+        const entry=context.projects.find(p=>p.id===input.projectId),record=await source.project(input.projectId);
+        if(!record.reference)throw Error('Project continuity is unavailable.');
+        return {operation:input.operation,project:{...entry,continuity:record.continuity},reference:record.reference};
+      },
+      integrate(result,context,{track}) {
+        return result.operation==='evidence'?{...context,skillResult:result,projectEvidenceRead:{projectId:result.evidence.projectId}}:attachProjectResult(context,{...result,
+          project:{...result.project,continuity:track('project:'+result.project.id,result.project.continuity)}});
+      },
+      validateResult: result=>result?.operation==='evidence'?typeof result.evidence?.projectId==='string'&&Array.isArray(result.evidence.entries):
+        ['lookup','enter'].includes(result?.operation)&&typeof result.reference==='string'&&!!result.project?.continuity
     },
     {
       descriptor: skillDescriptor("create_project", version, "preview",

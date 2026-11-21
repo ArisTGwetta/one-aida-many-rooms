@@ -1,5 +1,7 @@
 import { projectSkills } from "./project-skills.mjs";
 import { createDriveClient } from "./memory.mjs";
+import { createJournal } from './recent-journal.mjs';
+import { changeFields, validateOperation, evolve, validateSnapshot, validateReview, scopeAllowed, fingerprint, validateCheckpoint } from './memory-bridge.mjs';
 
 const layers = ["long", "short", "recent", "facts", "insights"];
 const kinds = ["just_keep_talking", "ask_for_help", "continue_project", "switch_project", "propose_project", "request_capability", "discover_capability"];
@@ -30,7 +32,7 @@ const actionSchema = (choices, minItems) => object({
 export const awakeSchema = object({
   action: { anyOf: [actionSchema(optionalSources, 0), actionSchema(citedKinds, 1)] },
   rebuild: { anyOf: [enumeration(...reasons), { type: "null" }] },
-  changes: array(object({ ...item.properties, layer: enumeration("long", "short", "recent") })),
+  changes: array(object({ ...item.properties, layer: enumeration("long", "short", "recent"), ...changeFields })),
   candidates: array(object({ ...item.properties, layer: enumeration("facts", "insights") })),
   contradictions: array(item)
 });
@@ -50,6 +52,10 @@ export const awakeInstructions = [
   "Propose source-grounded changes only when context meaning changes or refresh is due. LONG is purpose and enduring direction, SHORT is current situation and next steps, RECENT is meaningful events.",
   "Use separate global and active-project scopes. Changes add a current observation to a bounded working layer, not a canonical commit.",
   "Use exact visible source IDs. Return empty arrays and null rebuild when there is no update. Report consequential unresolved contradictions and keep candidate facts separate from working context."
+  ,"LONG, SHORT and RECENT are current interpretations, not age buckets. Each change supplies operation KEEP, EXPAND, REVISE or UNCLEAR and a meaning array. KEEP has no meaning changes. EXPAND preserves previous meanings and adds compatible ones. UNCLEAR preserves competing claims and adds an uncertainty. REVISE explicitly replaces a prior meaning ID using new evidence, preserving unrelated meanings. New information is not automatically a contradiction."
+  ,"Each meaning has a fresh stable id, kind event/claim/belief/interpretation/uncertainty, text, exact supplied sources, and replaces (prior meaning ID only for REVISE, otherwise null). Distinguish a reported claim from confirmation; never promote a candidate to a canonical fact. Supply the complete coherent current text, at most 400 characters, for the changed view. Preserve prior relevant meaning even when summarizing in different words. Legacy entries without meaning have IDs legacy-0, legacy-1, etc. Normalize multiple legacy entries into one current interpretation when making an eligible checkpoint."
+  ,"Only awake.changes and awake.candidates drive the memory bridge; top-level candidates remain compatibility proposals. Use no update for disposable questions. Meaningful, permitted changes can checkpoint without a Remember button. Explicit opt-out overrides all proposals."
+  ,"Inside an active project, keep private developments in project scope. A global update there requires sources solely from context.approvedReceipts explicitly authorized for global awareness. Those receipts contain approved outcomes only, never a room's private internals."
 ].join(" ");
 
 const builtins = [
@@ -70,10 +76,17 @@ function list(value, max, label) {
 }
 
 function continuity(doc) {
-  return Object.fromEntries(layers.map(layer => [layer, list(doc ? doc[layer] : [], 4, `${layer} context`).map(entry => {
+  const result = Object.fromEntries(layers.map(layer => [layer, list(doc ? doc[layer] : [], 4, `${layer} context`).map(entry => {
     if (!bounded(entry?.source, 150) || !bounded(entry?.text, 400)) throw new Error("Invalid continuity entry.");
-    return { source: entry.source, text: entry.text };
+    return { source: entry.source, text: entry.text, ...(entry.meaning ? { meaning: structuredClone(entry.meaning) } : {}) };
   })]));
+  validateSnapshot(result);
+  if (doc?.memoryBridge) {
+    const meta = doc.memoryBridge;
+    if (meta.version !== 1 || !Number.isInteger(meta.revision) || meta.revision < 1 || typeof meta.operationId !== 'string' || !/^drive:[\w-]+$/.test(meta.journalReference)) throw Error('Invalid durable context metadata.');
+    result.review = structuredClone(validateReview(meta.review));
+  }
+  return result;
 }
 
 function catalog(doc, kind) {
@@ -106,6 +119,8 @@ function catalog(doc, kind) {
 
 export function createContextSource(folderId, token, fetchRequest = fetch) {
   const drive = createDriveClient(folderId, token, fetchRequest);
+  const journal = createJournal(folderId, token, fetchRequest);
+  const loaded = new Map();
   let revision = 0;
   async function read(name, expectedId = null) {
     const query = new URLSearchParams({
@@ -129,7 +144,9 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
       throw Object.assign(new Error(`Cannot read ${name}. ${error.message}`), { status: error.status });
     }
     if (doc?.schema_version !== 1) throw new Error(`Unsupported Drive context version for ${name}.`);
-    return { doc, id, ref: `drive:${id}` };
+    const record = { doc, id, ref: `drive:${id}` };
+    loaded.set(name, structuredClone(record));
+    return record;
   }
 
   function readyId(properties, key, name) {
@@ -179,6 +196,110 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
   const source = {
     get revision() { return revision; },
     load,
+    async checkpointStatus(checkpoint) {
+      validateCheckpoint(checkpoint);
+      const properties = await drive.folderProperties();
+      for (const plan of checkpoint.plans) {
+        const key = plan.scope === 'global' ? 'ctxGlobalV1' : `ctxProject-${plan.projectId}`;
+        if (properties[key] !== plan.fileId) throw Error('Recovered checkpoint context identity changed.');
+        const doc = await drive.readJson(plan.fileId); continuity(doc);
+        if (doc.memoryBridge?.operationId !== checkpoint.operationId ||
+            layers.some(layer=>JSON.stringify(doc[layer])!==JSON.stringify(plan.after[layer]))) return 'unconfirmed';
+      }
+      return 'verified';
+    },
+    async prepareCheckpoint(result) {
+      const { receipt, envelope } = result;
+      const targets = [...new Set([...receipt.applied.filter(x => x.operation && x.operation !== 'KEEP'), ...receipt.candidates, ...receipt.contradictions]
+        .map(x => x.scope))];
+      const pool = new Map([[envelope.user.source, envelope.user.text]]);
+      for (const entry of [...envelope.memory.recent, ...envelope.memory.facts, ...(envelope.context.approvedReceipts ?? [])]) pool.set(entry.source, entry.text);
+      for (const track of [envelope.context.global, envelope.context.activeProject?.continuity]) if (track)
+        for (const layer of layers) for (const entry of track[layer]) pool.set(entry.source, entry.text);
+      const plans = [];
+      for (const scope of targets) {
+        const projectId = scope === 'project' ? envelope.context.currentProjectId : null;
+        const name = scope === 'global' ? ownedRecords[0][1] : `aida-context-project-${projectId}.json`;
+        const original = loaded.get(name);
+        if (!original) throw Error('The current owned context record is required before checkpointing.');
+        const canonical = continuity(original.doc);
+        const before = Object.fromEntries(layers.map(layer => [layer, structuredClone(canonical[layer])]));
+        const after = structuredClone(before);
+        const changes = receipt.applied.filter(x => x.scope === scope && x.operation && x.operation !== 'KEEP');
+        for (const update of changes) after[update.layer] = [{ source: update.source, text: update.text, meaning: structuredClone(update.meaning) }];
+        const candidate = receipt.candidates.filter(x => x.scope === scope), questions = receipt.contradictions.filter(x => x.scope === scope);
+        const oldReview = original.doc.memoryBridge?.review ?? { candidates: [], questions: [] };
+        const merge = (old, next) => [...new Map([...old, ...next].map(item => [JSON.stringify([item.text,item.sources,item.layer]),item])).values()];
+        const review = { candidates: merge(oldReview.candidates,candidate), questions: merge(oldReview.questions,questions) };
+        const refs = [...new Set([...changes, ...candidate, ...questions].flatMap(item => item.sources))];
+        if (refs.some(ref => !pool.has(ref))) throw Error('Checkpoint evidence is not available; no source text will be reconstructed.');
+        plans.push({ scope, projectId, fileId: original.id, baseHash: await fingerprint(original.doc), revision: original.doc.memoryBridge?.revision ?? 0,
+          before, after, review, evidence: refs.map(ref => ({source:ref,text:pool.get(ref)})), previousJournalReference: original.doc.memoryBridge?.journalReference ?? null });
+      }
+      return validateCheckpoint({ version:1, operationId:result.turn.turnId, plans });
+    },
+    async commitCheckpoint(checkpoint, journalReference) {
+      validateCheckpoint(checkpoint);
+      // A verified existing journal entry is the authority and historical evidence
+      // for this write. Model output cannot invent a direct context-write request.
+      const saved = await journal.readReference(journalReference);
+      const archived = saved.event.turns.find(turn => turn.turnId === checkpoint.operationId)?.awakeReceipt?.bridge;
+      if (JSON.stringify(archived) !== JSON.stringify(checkpoint)) throw Error('Checkpoint is not backed by the verified journal evidence.');
+      const properties = await drive.folderProperties();
+      if (properties[initializedKey] !== '1') throw Error('Owned context records must be initialized first.');
+      const verified = [];
+      for (const plan of checkpoint.plans) {
+        const key = plan.scope === 'global' ? 'ctxGlobalV1' : `ctxProject-${plan.projectId}`;
+        if (properties[key] !== plan.fileId) throw Error('Checkpoint context identity changed.');
+        if (plan.scope === 'project') {
+          const projects = await read(ownedRecords[1][1], readyId(properties,'ctxProjectsV1',ownedRecords[1][1]));
+          if (!catalog(projects.doc,'projects').some(entry => entry.id === plan.projectId)) throw Error('Checkpoint project is not registered.');
+        }
+        const current = await drive.readVersioned(plan.fileId);
+        continuity(current.record);
+        const meta = current.record.memoryBridge;
+        const targetMeta = { version:1, revision:plan.revision+1, operationId:checkpoint.operationId, journalReference,
+          previousJournalReference:plan.previousJournalReference, review:plan.review };
+        if (meta?.operationId === checkpoint.operationId) {
+          if (JSON.stringify(meta) !== JSON.stringify(targetMeta) || layers.some(layer => JSON.stringify(current.record[layer]) !== JSON.stringify(plan.after[layer])))
+            throw Error('Checkpoint retry content changed.');
+        } else {
+          if ((meta?.revision ?? 0) !== plan.revision || await fingerprint(current.record) !== plan.baseHash)
+            throw Error('Memory changed on another client. Stale checkpoint retained for review; no overwrite attempted.');
+          const record = { ...current.record, ...plan.after, memoryBridge:targetMeta };
+          await drive.replaceVersioned(plan.fileId, record, current.etag);
+          const readback = await drive.readVersioned(plan.fileId);
+          if (JSON.stringify(readback.record) !== JSON.stringify(record)) throw Error('Memory checkpoint readback failed; persistence is unconfirmed.');
+        }
+        verified.push({ scope:plan.scope, projectId:plan.projectId, revision:plan.revision+1, reference:`drive:${plan.fileId}` });
+      }
+      revision++;
+      return { status:'verified', operationId:checkpoint.operationId, records:verified };
+    },
+    async projectEvidence(id, wanted = null) {
+      if (!stableId(id)) throw Error('Invalid evidence project.');
+      const base = await load();
+      if (!base.projects.some(entry => entry.id === id)) throw Error('Evidence project is not registered.');
+      await source.project(id);
+      const doc = loaded.get(`aida-context-project-${id}.json`).doc;
+      const entries = new Map((doc.evidence ?? []).filter(e => bounded(e.source,150) && bounded(e.text,4000)).map(e => [e.source,{source:e.source,text:e.text}]));
+      let reference = doc.memoryBridge?.journalReference ?? null, hops = 0;
+      const visited = new Set();
+      while (reference && hops++ < 12) {
+        if (visited.has(reference)) throw Error('Cyclic project evidence history.'); visited.add(reference);
+        const record = await journal.readReference(reference);
+        const plans = record.event.turns.flatMap(turn => turn.awakeReceipt?.bridge?.plans ?? []).filter(p => p.scope === 'project' && p.projectId === id);
+        if (plans.length !== 1) throw Error('Journal evidence does not belong to this project.');
+        for (const e of plans[0].evidence) entries.set(e.source,e);
+        if (wanted && layers.some(layer=>plans[0].after[layer].some(item=>item.source===wanted)))
+          return {projectId:id,entries:plans[0].evidence,bounded:false};
+        if (wanted && entries.has(wanted)) break;
+        reference = plans[0].previousJournalReference;
+      }
+      const selected = wanted ? [...entries.values()].filter(e => e.source === wanted) : [...entries.values()].slice(0,12);
+      if (wanted && !selected.length) throw Error('Requested source not found within the bounded project evidence history.');
+      return { projectId:id, entries:selected, bounded:reference !== null && hops >= 12 };
+    },
     async initialize() {
       await drive.verifyFolder();
       let properties = await drive.folderProperties();
@@ -280,6 +401,8 @@ export function validateAwake(awake, envelope) {
   const exact = (value, fields) => value && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).length === fields.length && fields.every(field => Object.hasOwn(value, field));
   const known = new Set([envelope.user.source, ...envelope.context.references]);
+  for (const receipt of envelope.context.approvedReceipts ?? []) known.add(receipt.source);
+  for (const entry of envelope.context.skillResult?.evidence?.entries ?? []) known.add(entry.source);
   for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity, envelope.context.lookupProject?.continuity]) {
     if (track) for (const layer of layers) for (const entry of track[layer] ?? []) known.add(entry.source);
   }
@@ -308,6 +431,7 @@ export function validateAwake(awake, envelope) {
     for (const entry of awake[group]) {
       const fields = ["scope", "text", "sources", "rationale"];
       if (allowed) fields.push("layer");
+      if (group === 'changes' && Object.hasOwn(entry,'operation')) fields.push('operation','meaning');
       if (!exact(entry, fields) || !["global", "project"].includes(entry.scope) ||
           (allowed && !allowed.includes(entry.layer)) ||
           (entry.scope === "project" && !(envelope.context.activeProject || envelope.context.lookupProject) &&
@@ -315,8 +439,11 @@ export function validateAwake(awake, envelope) {
           !bounded(entry.text, 400) || !bounded(entry.rationale, 240) || !validSources(entry.sources, true)) {
         reject("awake_scoped_evidence", "Invalid scoped awake update or evidence.");
       }
+      if (group === 'changes' && entry.operation) validateOperation(entry,known);
     }
   }
+  if (new Set(awake.changes.map(item=>item.scope+':'+item.layer)).size !== awake.changes.length)
+    reject('awake_duplicate_view','Return one current interpretation per scope and view.');
 }
 
 export function journalReceipt(result, supportingTurn) {
@@ -327,12 +454,14 @@ export function journalReceipt(result, supportingTurn) {
   const { envelope } = result;
   const allowed = new Set([envelope.user.source, supportingTurn?.user.source, supportingTurn?.aida.source,
     ...envelope.context.references, ...envelope.memory.facts.map(item => item.source)]);
+  for (const value of envelope.context.approvedReceipts ?? []) allowed.add(value.source);
+  if (receipt.bridge) for (const plan of receipt.bridge.plans) for (const evidence of plan.evidence) allowed.add(evidence.source);
   const groups = ["proposed", "applied", "candidates", "contradictions"];
   if (!receipt.action.sources.every(ref => allowed.has(ref))) return undefined;
   const safe = Object.fromEntries(groups.map(group =>
     [group, receipt[group].filter(item => item.sources.every(ref => allowed.has(ref)))]));
   const { preview, ...journalFields } = receipt;
-  return { ...journalFields, ...safe, contextReferences: envelope.context.references,
+  return { ...journalFields, ...safe, ...(envelope.context.approvedReceipts?.length ? { approvedReceipts:envelope.context.approvedReceipts } : {}), contextReferences: envelope.context.references,
     projectId: envelope.context.currentProjectId, userSource: envelope.user.source };
 }
 
@@ -350,9 +479,12 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
   function track(key, seed) {
     const changes = working.get(key) ?? [];
-    return Object.fromEntries(layers.map(layer => [layer, [
-      ...seed[layer], ...changes.filter(item => item.layer === layer)
-    ].slice(-4)]));
+    return { ...seed, ...Object.fromEntries(layers.map(layer => {
+      let entries = seed[layer];
+      for (const update of changes.filter(item => item.layer === layer)) entries = update.operation ?
+        [{ source:update.source,text:update.text,meaning:update.meaning }] : [...entries,update].slice(-4);
+      return [layer,entries];
+    })) };
   }
 
   function add(key, update) {
@@ -367,6 +499,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
     if (!receipt || receipt.userSource !== turn.user.source) continue;
     if (receipt.outcome?.status === "project_selected" && stableId(receipt.outcome.projectId)) activeId = receipt.outcome.projectId;
     for (const item of Array.isArray(receipt.applied) ? receipt.applied : []) {
+      if (item.operation) continue; // Durable current context, not a short receipt window, owns typed snapshots.
       if (!bounded(item?.text, 400) || !bounded(item.source, 150) ||
           !["long", "short", "recent"].includes(item.layer)) continue;
       if (item.scope === "global") add("global", item);
@@ -455,8 +588,8 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
           preview, proposed: [], candidates: [], contradictions: [], applied: [] };
       }
       count++;
-      if (envelope.context.lookupProject) {
-        return { action, outcome: { status: "project_looked_up", projectId: envelope.context.lookupProject.id },
+      if (envelope.context.lookupProject || envelope.context.projectEvidenceRead) {
+        return { action, outcome: { status: "project_looked_up", projectId: envelope.context.lookupProject?.id ?? envelope.context.projectEvidenceRead.projectId },
           proposed: awake.changes, candidates: [], contradictions: awake.contradictions, applied: [] };
       }
       if (envelope.context.projectSelection) {
@@ -494,20 +627,28 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
       const due = envelope.context.refresh.due || (awake.rebuild && awake.rebuild !== "threshold");
       const applied = [];
+      const rejected = [];
       if (due && action.uncertainty === null) {
         for (const change of awake.changes) {
-          const key = change.scope === "global" ? "global" : `project:${current}`;
+          if (!scopeAllowed(change,envelope)) { rejected.push({scope:change.scope,layer:change.layer,reason:'scope_transfer_denied'}); continue; }
+          if (change.operation === 'KEEP') continue;
           const update = { ...change, projectId: change.scope === "project" ? current : null,
             source: `awake:${envelope.user.source}:${applied.length}` };
-          add(key, update);
+          if (change.operation) {
+            const seed = change.scope === 'global' ? envelope.context.global : envelope.context.activeProject.continuity;
+            update.meaning = evolve(seed[change.layer],change,update.source).meaning;
+          }
           applied.push(update);
         }
+        // Validate the complete set before changing any working view.
+        for (const update of applied) add(update.scope==='global'?'global':`project:${current}`,update);
         count = 0;
         sizeAtRefresh = envelope.context.refresh.contextChars;
         refreshNext = true;
       }
       return { action, outcome, rebuild: awake.rebuild, refreshDue: envelope.context.refresh.due,
-        proposed: awake.changes, candidates: awake.candidates, contradictions: awake.contradictions, applied };
+        proposed: awake.changes, candidates: awake.candidates.filter(x=>scopeAllowed(x,envelope)),
+        contradictions: awake.contradictions.filter(x=>scopeAllowed(x,envelope)), applied, rejected };
     }
   };
 }

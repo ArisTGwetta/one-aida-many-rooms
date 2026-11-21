@@ -1,4 +1,5 @@
 import { createDriveClient } from "./memory.mjs";
+import { validateCheckpoint } from './memory-bridge.mjs';
 
 export const recentTurns = 3;
 const day = 24 * 60 * 60 * 1000;
@@ -78,6 +79,12 @@ function validateEvent(event) {
       throw new Error("A Drive journal turn has invalid source evidence.");
     }
     ids.add(turn.turnId);
+    if (turn.awakeReceipt?.bridge) {
+      if(event.disposition!=='candidate')throw Error('Permanent checkpoints require nonexpiring journal evidence.');
+      const checkpoint = validateCheckpoint(turn.awakeReceipt.bridge);
+      if (checkpoint.operationId !== turn.turnId || turn.awakeReceipt.userSource !== turn.user.source)
+        throw new Error('Journal checkpoint does not match its conversation evidence.');
+    }
   }
   return event;
 }
@@ -152,6 +159,13 @@ export function createJournal(folderId, token, fetchRequest = fetch, now = Date.
 
   return {
     page,
+    async readReference(reference) {
+      if (!/^drive:[\w-]+$/.test(reference)) throw Error('Invalid journal evidence reference.');
+      const fileId = reference.slice(6), meta = await drive.metadata(fileId);
+      if (meta.id !== fileId || !meta.parents?.includes(folderId) || meta.trashed !== false || meta.appProperties?.aidaMemory !== marker)
+        throw Error('Journal evidence is outside the owned store.');
+      return read({id:fileId,appProperties:meta.appProperties});
+    },
     async sleepEvidence(cursor) {
       const result = await list(eligibleFilter(), 12, cursor);
       const entries = await Promise.all(result.files.map(read));

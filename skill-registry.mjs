@@ -1,3 +1,5 @@
+import { safeReceipt } from './memory-bridge.mjs';
+
 export function createSkillRegistry(bindings) {
   const entries = new Map();
   for (const binding of bindings) {
@@ -35,6 +37,12 @@ export function createSkillRegistry(bindings) {
     },
     integrate(request, result, context, steward) {
       const binding = entries.get(request.id + "@" + request.version);
+      if (binding.publicReceipt) {
+        const receipt = safeReceipt(binding.publicReceipt(result,context),binding.descriptor,binding.receiptPolicy);
+        if (receipt.scope === 'project' && !context.projects.some(p=>p.id===receipt.projectId)) throw Error('Receipt project is not registered.');
+        return { ...context, approvedReceipts:[...(context.approvedReceipts??[]),receipt].slice(-3),
+          skillResult:{id:request.id,version:request.version,receipt} };
+      }
       return binding.integrate ? binding.integrate(result, context, steward) : { ...context, skillResult: result };
     },
     descriptors: () => [...entries.values()].map(binding => structuredClone(binding.descriptor)),

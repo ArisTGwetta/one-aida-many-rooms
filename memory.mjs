@@ -108,6 +108,31 @@ export function createDriveClient(folderId, token, fetchRequest = fetch) {
 
   return {
     verifyFolder,
+    metadata(fileId) {
+      if (!isId(fileId)) throw new Error('Invalid memory evidence reference.');
+      return request(`${api}/files/${fileId}?fields=id,name,parents,mimeType,trashed,appProperties`);
+    },
+    async readVersioned(fileId) {
+      if (!isId(fileId)) throw new Error('Invalid context record ID.');
+      // Drive v2 exposes the opaque file ETag as JSON, avoiding reliance on
+      // browser exposure of a cross-origin response header. All ordinary paths
+      // keep their existing v3 adapter and formats.
+      const readTag = () => request(`https://www.googleapis.com/drive/v2/files/${fileId}?fields=id,etag,parents(id),mimeType,labels(trashed)`);
+      const before = await readTag();
+      if (before.id !== fileId || !before.parents?.some(p => p.id === folderId) || before.labels?.trashed !== false ||
+          before.mimeType !== 'application/json' || typeof before.etag !== 'string' || !/^"[^"\r\n]+"$/.test(before.etag))
+        throw new Error('A strong, scoped Drive context version is required; no write attempted.');
+      const record = await this.readJson(fileId);
+      const after = await readTag();
+      if (after.etag !== before.etag) throw new Error('Context changed during read; retry without regenerating the reply.');
+      return { record, etag: before.etag };
+    },
+    async replaceVersioned(fileId, record, etag) {
+      if (!isId(fileId) || typeof etag !== 'string' || !/^"[^"\r\n]+"$/.test(etag)) throw new Error('Missing context write precondition.');
+      return request(`https://www.googleapis.com/upload/drive/v2/files/${fileId}?uploadType=media&fields=id,etag`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': etag }, body: JSON.stringify(record)
+      });
+    },
     async folderProperties() {
       const folder = await request(`${api}/files/${folderId}?fields=id,appProperties`);
       if (folder.id !== folderId) throw new Error("Drive context folder identity mismatch.");

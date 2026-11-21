@@ -99,7 +99,7 @@ test("project selection requires a known stable ID and an explicit switch; scope
     }
     if (message === "We decided to map the county") {
       assert.equal(envelope.context.activeProject.continuity.short.at(-1).text, "Survey the west side next.");
-      assert.equal(envelope.context.global.short.at(-1).text, "Help with the next map survey.");
+      assert.deepEqual(envelope.context.global.short, []);
       return answer(envelope, { rebuild: "meaningful_event", changes: [
         { scope: "project", layer: "long", text: "Map the whole county.", sources: [envelope.user.source], rationale: "The project expanded." }
       ] });
@@ -116,7 +116,8 @@ test("project selection requires a known stable ID and an explicit switch; scope
   const selected = await session.send("Switch to Atlas");
   assert.equal(selected.receipt.outcome.projectId, "atlas");
   const local = await session.send("A bridge has closed");
-  assert.equal(local.receipt.applied.length, 2);
+  assert.equal(local.receipt.applied.length, 1);
+  assert.equal(local.receipt.rejected[0].reason, 'scope_transfer_denied');
   await session.send("We decided to map the county");
   assert.deepEqual((await session.send("Thanks")).receipt.applied, []);
 

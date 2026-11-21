@@ -9,6 +9,7 @@ import { availableSupport, createJournal, dispositionFor, makeJournalEvent, visu
 import { setupSleepPanel } from "./sleep-panel.mjs";
 import { createSleepStore } from "./sleep.mjs";
 import { createAwakeSteward, createContextSource, journalReceipt } from "./awake-context.mjs";
+import { checkpointEligible } from './memory-bridge.mjs';
 
 const byId = id => document.getElementById(id);
 const connect = byId("connect");
@@ -423,6 +424,19 @@ async function setupChat(folderId) {
   async function recover(id) {
     const recovered = await journal.recover(id);
     resetChat(recovered);
+    // An interrupted journal-first checkpoint is offered for persistence retry,
+    // never regenerated through the conversational provider.
+    const latest = recovered.turns.at(-1);
+    const checkpoint = latest?.awakeReceipt?.bridge;
+    if (checkpoint) {
+      await contextSource.load();
+      const state = await contextSource.checkpointStatus(checkpoint);
+      if (state !== 'verified') {
+        const containing = recovered.entries.find(entry=>entry.event.turns.some(turn=>turn.turnId===checkpoint.operationId));
+        pending = { event:containing.event,fileId:containing.fileId,journalVerified:containing.fileId,checkpoint };
+        return 'Recovered conversation; its memory checkpoint is unconfirmed. Retry persistence without another model call.';
+      }
+    }
     return recovered.turns.length
       ? `Recovered ${recovered.turns.length} exchange(s) from Drive.`
       : "No saved exchanges for this conversation.";
@@ -430,15 +444,30 @@ async function setupChat(folderId) {
 
   async function savePending() {
     try {
+      if (!pending.event) {
+        const { result, turn, disposition, supportingTurn } = pending;
+        pending.checkpoint ??= await contextSource.prepareCheckpoint(result);
+        result.receipt.bridge = pending.checkpoint;
+        const receipt = journalReceipt(result,supportingTurn);
+        if (!receipt) throw Error('Checkpoint evidence could not be retained safely.');
+        turn.awakeReceipt = receipt;
+        pending.event = makeJournalEvent(conversationId,turn,disposition,supportingTurn);
+      }
       if (pending.event.expiresAt && Date.parse(pending.event.expiresAt) <= Date.now()) {
         pending = undefined;
         return "The pending provisional exchange expired. Check Drive if its earlier save was uncertain.";
       }
-      const stored = await journal.save(pending);
+      const stored = pending.journalVerified ? await journal.readReference('drive:'+pending.journalVerified) : await journal.save(pending);
+      pending.journalVerified = stored.fileId;
+      if (pending.checkpoint) {
+        const verified = await contextSource.commitCheckpoint(pending.checkpoint,'drive:'+stored.fileId);
+        byId('context-status').textContent = 'Memory checkpoint verified: ' + JSON.stringify(verified.records);
+      }
       pending = undefined;
       return `Saved and verified in Drive. File ID ${stored.fileId}.`;
     } catch (error) {
-      journalStatus.textContent = "Journal save unconfirmed. Retry uses the same exchange and file ID.";
+      journalStatus.textContent = pending?.journalVerified ? 'Memory checkpoint unconfirmed; journal evidence is safe. Retry does not call the model.' :
+        "Journal save unconfirmed. Retry uses the same exchange and file ID.";
       throw error;
     }
   }
@@ -488,7 +517,7 @@ async function setupChat(folderId) {
       }
       let result;
       try {
-        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded", libraryEvidence, visual });
+        result = await session.send(submitted, { keepInContext: chosenDisposition !== "excluded", libraryEvidence, visual, memoryDisposition:chosenDisposition });
       } catch (error) {
         if (visual?.image) error.message = "Aida could not inspect the current image. " + error.message;
         throw Object.assign(error, { providerCalls });
@@ -510,7 +539,8 @@ async function setupChat(folderId) {
       transcript.dispatchEvent(new CustomEvent("aida-affect", { detail: {
         valence: result.response.affect.valence, arousal: result.response.affect.arousal
       } }));
-      disposition = chosenDisposition;
+      const needsCheckpoint = checkpointEligible(result,chosenDisposition);
+      disposition = needsCheckpoint && chosenDisposition === 'ephemeral' ? 'candidate' : chosenDisposition;
       preceding = { turn, disposition };
       sources = [turn.user.source, turn.aida.source];
       showJournalContext();
@@ -538,11 +568,14 @@ async function setupChat(folderId) {
       if (message.value === submitted) message.value = "";
       retention.value = "auto";
       if (disposition === "candidate" || disposition === "provisional") {
-        const receipt = journalReceipt(result, supportingTurn);
-        if (receipt) turn.awakeReceipt = receipt;
-        pending = { event: makeJournalEvent(conversationId, turn, disposition, supportingTurn) };
-        preceding.expiresAt = pending.event.expiresAt;
-        sources = pending.event.turns.flatMap(item => [item.user.source, item.aida.source]);
+        if (needsCheckpoint) pending = { result,turn,disposition,supportingTurn };
+        else {
+          const receipt = journalReceipt(result, supportingTurn);
+          if (receipt) turn.awakeReceipt = receipt;
+          pending = { event: makeJournalEvent(conversationId, turn, disposition, supportingTurn) };
+        }
+        preceding.expiresAt = disposition === 'provisional' ? new Date(Date.now()+24*60*60*1000).toISOString() : null;
+        sources = (supportingTurn ? [supportingTurn,turn] : [turn]).flatMap(item => [item.user.source,item.aida.source]);
         showJournalContext();
         try {
           journalStatus.textContent = await savePending();

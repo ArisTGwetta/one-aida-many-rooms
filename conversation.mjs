@@ -1,4 +1,5 @@
 import { validateAwake } from "./awake-context.mjs";
+import { incidentalConsultation } from './memory-bridge.mjs';
 
 export const conversationVersion = "0.2";
 export class ConversationTransportError extends Error {}
@@ -130,7 +131,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         inFlight = false;
       }
     },
-    async send(message, { keepInContext = true, libraryEvidence, visual } = {}) {
+    async send(message, { keepInContext = true, libraryEvidence, visual, memoryDisposition = 'auto' } = {}) {
       if (!text(message, 4000)) throw new Error("Enter a message between 1 and 4,000 characters.");
       if (inFlight) throw new Error("A conversation turn is already in progress.");
       inFlight = true;
@@ -191,7 +192,10 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
               skillFailure: { id: response.skillRequest.id, version: response.skillRequest.version } });
           }
         }
-        const receipt = steward ? await steward.apply(envelope, response.awake, keepInContext && !visual) : undefined;
+        // Provisional continuity stays in its expiring journal, never in a
+        // permanent snapshot or a working interpretation later checkpointed.
+        const permitted = keepInContext && !visual && memoryDisposition !== 'provisional' && (!incidentalConsultation(message) || memoryDisposition === 'candidate');
+        const receipt = steward ? await steward.apply(envelope, response.awake, permitted) : undefined;
         const aida = { source: `turn:${turnId}:aida`, role: "aida", text: response.reply };
         if (keepInContext) recent = [...recent, user, aida].slice(-recentLimit);
         lastOrder = order;
