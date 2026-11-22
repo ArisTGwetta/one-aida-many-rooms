@@ -35,6 +35,16 @@ and live behavioral acceptance are different states.
 
 ## Current deployment and verification boundary
 
+Mission 008 — Living Mind (November 22): same current-state engine integrated into
+ordinary chat for Everyday and project scopes, with affect/orientation/reflections,
+checkout/handoff, source-safe scoped conversation and state-evolution evidence.
+The [implementation checkpoint](../architecture/living-mind-implementation.md)
+records schema compatibility, write effects, tests and the exact live procedure.
+Local/synthetic results do not close real cold-start and correction acceptance.
+No replacement preview or live Drive/provider work is implied by this entry.
+Local checkpoint verification: 156/156 tests; 36-file loopback HTTP module/style
+graph; whitespace check clean. No paid calls, live Drive writes or publication.
+
 - Pages source: `pages-preview-7827a28` at `336fb8f`, branch root.
 - Temporary ordinary application: https://aristgwetta.github.io/one-aida-many-rooms/preview/c1c6fb5/
 - Root remains older `71a08ee`; it is not the current development source.

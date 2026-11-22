@@ -1,6 +1,7 @@
 import { projectSkills } from "./project-skills.mjs";
 import { createDriveClient } from "./memory.mjs";
 import { createJournal } from './recent-journal.mjs';
+import { currentPackage,initialMind,validateMind,nextMind,mindContents } from './living-mind.mjs';
 import { changeFields, validateOperation, evolve, validateSnapshot, validateReview, scopeAllowed, fingerprint, validateCheckpoint } from './memory-bridge.mjs';
 
 const layers = ["long", "short", "recent", "facts", "insights"];
@@ -38,6 +39,9 @@ export const awakeSchema = object({
 });
 
 export const awakeInstructions = [
+  'You receive context.currentState: the complete current package for Everyday or the selected project, plus global identity and authorized general understanding. Evaluate each interaction, not just Sleep. Derive next SHORT from current SHORT and new RECENT, then consider next LONG against current LONG and that new SHORT. One call may propose both; no change is valid. Explicit corrections, decisions and meaningful unfinished business warrant a meaningful rebuild. Preserve compatible meanings and use REVISE for supersession, not an unrelated replacement. Changes apply only to the selected scope. Affective output continues the current package affect. Pending reflections are evidence for consideration, never orders. Do not claim persistence until verified.',
+  'For current memory citations use the entry.source reference. Nested meaning.sources and retrieval pointers identify historical evidence; retrieve their contents before citing them as newly supplied evidence. Keep earlier meaning IDs for explicit REVISE targets, not as invented source citations.',
+  'The committed current package represents current understanding; archived conversation can contain superseded claims. Do not revive an obsolete claim merely because it appears in history. A genuinely new user correction is evidence to consider for revision, not a reason to erase unrelated understanding.',
   "Return the awake section. Default to just_keep_talking when conversation needs no action.",
   "Use ask_for_help when uncertain. An implied request can propose a capability, but never grants permission.",
   "Use switch_project only when the user asks to switch and cite the current user message. A mention is not a switch.",
@@ -81,6 +85,8 @@ function continuity(doc) {
     return { source: entry.source, text: entry.text, ...(entry.meaning ? { meaning: structuredClone(entry.meaning) } : {}) };
   })]));
   validateSnapshot(result);
+  if(doc?.livingMind){result.livingMind=structuredClone(validateMind(doc.livingMind,doc.projectId??null));}
+  if(doc?.memoryBridge)result.memoryVersion=doc.memoryBridge.revision;
   if (doc?.memoryBridge) {
     const meta = doc.memoryBridge;
     if (meta.version !== 1 || !Number.isInteger(meta.revision) || meta.revision < 1 || typeof meta.operationId !== 'string' || !/^drive:[\w-]+$/.test(meta.journalReference)) throw Error('Invalid durable context metadata.');
@@ -196,6 +202,29 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
   const source = {
     get revision() { return revision; },
     load,
+    async checkout(projectId,sessionId,{takeover=false,release=false}={}) {
+      if(projectId!==null&&!stableId(projectId))throw Error('Invalid Living Mind scope.');
+      if(typeof sessionId!=='string'||!sessionId||sessionId.length>64)throw Error('Invalid checkout session.');
+      const base=await load();
+      if(!base.initialized)throw Error('Initialize owned context before checking out Living Mind.');
+      if(projectId&&!base.projects.some(p=>p.id===projectId))throw Error('Checkout project is not registered.');
+      if(projectId)await source.project(projectId);
+      const name=projectId?`aida-context-project-${projectId}.json`:ownedRecords[0][1];
+      const original=loaded.get(name),current=await drive.readVersioned(original.id);
+      continuity(current.record);
+      const mind=structuredClone(current.record.livingMind??initialMind(continuity(current.record),projectId));
+      if(mind.checkout&&mind.checkout.sessionId!==sessionId&&!takeover)throw Object.assign(Error('Another active or interrupted session owns this scope. Inspect or explicitly take over before continuing.'),{diagnostic:'mind_checkout_conflict',scopeId:mind.scopeId});
+      if(release&&!mind.checkout)return {status:'released',scopeId:mind.scopeId};
+      if(release&&mind.checkout?.sessionId!==sessionId)throw Error('Only this session can release its checkout.');
+      const expiresAt=new Date(Date.now()+20*60*1000).toISOString();
+      if(!release&&mind.checkout?.sessionId===sessionId&&Date.parse(mind.checkout.expiresAt)>Date.now())return {status:'checked_out',scopeId:mind.scopeId};
+      mind.checkout=release?null:{sessionId,expiresAt};
+      const record={...current.record,livingMind:validateMind(mind,projectId)};
+      await drive.replaceVersioned(original.id,record,current.etag);
+      if(JSON.stringify((await drive.readVersioned(original.id)).record)!==JSON.stringify(record))throw Error('Checkout write unconfirmed.');
+      loaded.set(name,{id:original.id,ref:`drive:${original.id}`,doc:record});revision++;
+      return {status:release?'released':'checked_out',scopeId:mind.scopeId};
+    },
     async checkpointStatus(checkpoint) {
       validateCheckpoint(checkpoint);
       const properties = await drive.folderProperties();
@@ -203,7 +232,9 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
         const key = plan.scope === 'global' ? 'ctxGlobalV1' : `ctxProject-${plan.projectId}`;
         if (properties[key] !== plan.fileId) throw Error('Recovered checkpoint context identity changed.');
         const doc = await drive.readJson(plan.fileId); continuity(doc);
+        if(doc.memoryBridge?.operationId!==checkpoint.operationId&&(doc.memoryBridge?.revision??0)>plan.revision)return 'newer_state';
         if (doc.memoryBridge?.operationId !== checkpoint.operationId ||
+            plan.mind&&JSON.stringify(mindContents(doc.livingMind??{}))!==JSON.stringify(mindContents({...plan.mind,retrieval:[doc.memoryBridge.journalReference,...plan.mind.retrieval].slice(0,8)}))||
             layers.some(layer=>JSON.stringify(doc[layer])!==JSON.stringify(plan.after[layer]))) return 'unconfirmed';
       }
       return 'verified';
@@ -212,6 +243,7 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
       const { receipt, envelope } = result;
       const targets = [...new Set([...receipt.applied.filter(x => x.operation && x.operation !== 'KEEP'), ...receipt.candidates, ...receipt.contradictions]
         .map(x => x.scope))];
+      if(result.response&&!targets.includes(envelope.context.currentProjectId?'project':'global'))targets.push(envelope.context.currentProjectId?'project':'global');
       const pool = new Map([[envelope.user.source, envelope.user.text]]);
       for (const entry of [...envelope.memory.recent, ...envelope.memory.facts, ...(envelope.context.approvedReceipts ?? [])]) pool.set(entry.source, entry.text);
       for (const track of [envelope.context.global, envelope.context.activeProject?.continuity]) if (track)
@@ -233,8 +265,9 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
         const review = { candidates: merge(oldReview.candidates,candidate), questions: merge(oldReview.questions,questions) };
         const refs = [...new Set([...changes, ...candidate, ...questions].flatMap(item => item.sources))];
         if (refs.some(ref => !pool.has(ref))) throw Error('Checkpoint evidence is not available; no source text will be reconstructed.');
+        const mind=result.response?nextMind(original.doc.livingMind,after,review,result,projectId):undefined;
         plans.push({ scope, projectId, fileId: original.id, baseHash: await fingerprint(original.doc), revision: original.doc.memoryBridge?.revision ?? 0,
-          before, after, review, evidence: refs.map(ref => ({source:ref,text:pool.get(ref)})), previousJournalReference: original.doc.memoryBridge?.journalReference ?? null });
+          before, after, review, evidence: refs.map(ref => ({source:ref,text:pool.get(ref)})), previousJournalReference: original.doc.memoryBridge?.journalReference ?? null,...(mind?{mind}:{}) });
       }
       return validateCheckpoint({ version:1, operationId:result.turn.turnId, plans });
     },
@@ -261,17 +294,18 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
         const targetMeta = { version:1, revision:plan.revision+1, operationId:checkpoint.operationId, journalReference,
           previousJournalReference:plan.previousJournalReference, review:plan.review };
         if (meta?.operationId === checkpoint.operationId) {
-          if (JSON.stringify(meta) !== JSON.stringify(targetMeta) || layers.some(layer => JSON.stringify(current.record[layer]) !== JSON.stringify(plan.after[layer])))
+          if (JSON.stringify(meta) !== JSON.stringify(targetMeta) || layers.some(layer => JSON.stringify(current.record[layer]) !== JSON.stringify(plan.after[layer]))||plan.mind&&JSON.stringify(mindContents(current.record.livingMind??{}))!==JSON.stringify(mindContents({...plan.mind,retrieval:[journalReference,...plan.mind.retrieval].slice(0,8)})))
             throw Error('Checkpoint retry content changed.');
         } else {
+          if(current.record.livingMind?.checkout&&plan.mind?.checkout?.sessionId!==current.record.livingMind.checkout.sessionId)throw Error('Checkout changed; uncommitted state retained without overwrite.');
           if ((meta?.revision ?? 0) !== plan.revision || await fingerprint(current.record) !== plan.baseHash)
             throw Error('Memory changed on another client. Stale checkpoint retained for review; no overwrite attempted.');
-          const record = { ...current.record, ...plan.after, memoryBridge:targetMeta };
+          const record = { ...current.record, ...plan.after, memoryBridge:targetMeta,...(plan.mind?{livingMind:{...plan.mind,retrieval:[journalReference,...plan.mind.retrieval].slice(0,8)}}:{}) };
           await drive.replaceVersioned(plan.fileId, record, current.etag);
           const readback = await drive.readVersioned(plan.fileId);
           if (JSON.stringify(readback.record) !== JSON.stringify(record)) throw Error('Memory checkpoint readback failed; persistence is unconfirmed.');
         }
-        verified.push({ scope:plan.scope, projectId:plan.projectId, revision:plan.revision+1, reference:`drive:${plan.fileId}` });
+        verified.push({ scope:plan.scope, projectId:plan.projectId, revision:plan.revision+1, reference:`drive:${plan.fileId}`,previous:plan.before,proposed:plan.after,validation:'accepted',recovered:continuity((await drive.readJson(plan.fileId))),meaningRevision:plan.mind?.meaningRevision??null });
       }
       revision++;
       return { status:'verified', operationId:checkpoint.operationId, records:verified };
@@ -403,8 +437,8 @@ export function validateAwake(awake, envelope) {
   const known = new Set([envelope.user.source, ...envelope.context.references]);
   for (const receipt of envelope.context.approvedReceipts ?? []) known.add(receipt.source);
   for (const entry of envelope.context.skillResult?.evidence?.entries ?? []) known.add(entry.source);
-  for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity, envelope.context.lookupProject?.continuity]) {
-    if (track) for (const layer of layers) for (const entry of track[layer] ?? []) known.add(entry.source);
+  for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity, envelope.context.lookupProject?.continuity,envelope.context.currentState,envelope.context.globalState]) {
+    if(track){for (const layer of layers) for (const entry of track[layer] ?? []) known.add(entry.source);for(const entry of track.conversation??[])known.add(entry.source);}
   }
   const validSources = (refs, required) => Array.isArray(refs) && refs.length <= 4 && (!required || refs.length > 0) &&
     new Set(refs).size === refs.length && refs.every(ref => known.has(ref));
@@ -449,7 +483,7 @@ export function validateAwake(awake, envelope) {
 export function journalReceipt(result, supportingTurn) {
   const receipt = result.receipt;
   if (!receipt || receipt.outcome.status === "excluded" || (receipt.preview || receipt.action.kind === "propose_project")) return undefined;
-  if (!receipt.applied.length && !receipt.proposed.length && !receipt.candidates.length &&
+  if (!receipt.bridge && !receipt.applied.length && !receipt.proposed.length && !receipt.candidates.length &&
       !receipt.contradictions.length && receipt.action.kind === "just_keep_talking") return undefined;
   const { envelope } = result;
   const allowed = new Set([envelope.user.source, supportingTurn?.user.source, supportingTurn?.aida.source,
@@ -465,17 +499,22 @@ export function journalReceipt(result, supportingTurn) {
     projectId: envelope.context.currentProjectId, userSource: envelope.user.source };
 }
 
-export function createAwakeSteward(source, { turns = 4, contextChars = 12000, recoveredTurns = [], skills = projectSkills(source) } = {}) {
+export function createAwakeSteward(source, { turns = 4, contextChars = 12000, recoveredTurns = [], skills = projectSkills(source),sessionId=null } = {}) {
   let pendingPreview;
   let pendingWrite;
   let base;
   let activeId = null;
+  let heldScope;
   let project;
   let count = 0;
   let refreshNext = false;
   let sizeAtRefresh = 0;
   let sourceRevision;
   const working = new Map();
+  function decorate(context){
+    const selected=context.lookupProject??context.activeProject;
+    return {...context,globalState:currentPackage(context.global),currentState:selected?currentPackage(selected.continuity,selected.id):currentPackage(context.global)};
+  }
 
   function track(key, seed) {
     const changes = working.get(key) ?? [];
@@ -495,6 +534,8 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   }
 
   for (const turn of recoveredTurns) {
+    if(turn.scopeId==='everyday')activeId=null;
+    else if(typeof turn.scopeId==='string'&&turn.scopeId.startsWith('project:')&&stableId(turn.scopeId.slice(8)))activeId=turn.scopeId.slice(8);
     const receipt = turn.awakeReceipt;
     if (!receipt || receipt.userSource !== turn.user.source) continue;
     if (receipt.outcome?.status === "project_selected" && stableId(receipt.outcome.projectId)) activeId = receipt.outcome.projectId;
@@ -509,6 +550,23 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
   return {
     get activeProjectId() { return activeId; },
+    async enterScope(id){
+      const current=await source.load();if(id&&!current.projects.some(p=>p.id===id))throw Error('Select a registered project.');
+      activeId=id??null;project=undefined;refreshNext=true;
+    },
+    async releaseScope(){if(sessionId&&source.checkout&&heldScope!==undefined){await source.checkout(heldScope,sessionId,{release:true});heldScope=undefined;}},
+    async checkoutContext(context,options={}){
+      if(sessionId&&source.checkout&&!context.lookupProject){
+        if(heldScope!==undefined&&heldScope!==(context.currentProjectId??null))await this.releaseScope();
+        await source.checkout(context.currentProjectId??null,sessionId,options);
+        heldScope=context.currentProjectId??null;
+        base=await source.load();sourceRevision=source.revision;
+        working.delete(context.currentProjectId?'project:'+context.currentProjectId:'global');
+        context={...context,global:track('global',base.global)};
+        if(context.currentProjectId){const saved=await source.project(context.currentProjectId);project=saved;context.activeProject={...context.activeProject,continuity:saved.continuity};}
+      }
+      return decorate(context);
+    },
     async assemble(recent, user, inspectionProjectId) {
       if (!base || refreshNext || sourceRevision !== source.revision) {
         base = await source.load();
@@ -541,9 +599,9 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
         references: [...base.references, scopedProject?.reference].filter(Boolean),
         refresh: { due: count >= turns || (size >= contextChars && size > sizeAtRefresh), turnsSinceRefresh: count, contextChars: size }
       };
-      if (inspecting) return context;
+      if (inspecting) return decorate(context);
       const request = skills.plan({ user, context }, "read");
-      return request ? this.resolveSkill(context, user, request) : context;
+      return request ? this.resolveSkill(context, user, request) : decorate(context);
     },
 
     async resolveSkill(context, user, request, envelope, allowPreview = true) {
@@ -556,7 +614,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       if (skill.phase === "preview") {
         return { ...context, retrievalComplete: true, skillPreview: { request: structuredClone(request), proposal: result.preview } };
       }
-      return { ...skills.integrate(request, result, context, { track }), retrievalComplete: true };
+      return decorate({ ...skills.integrate(request, result, context, { track }), retrievalComplete: true });
     },
 
     cancelPreview(preview) {
@@ -573,6 +631,7 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
     async apply(envelope, awake, allowUpdates = true) {
       validateAwake(awake, envelope);
+      if(sessionId&&awake.changes.some(change=>!change.operation))throw Error('Living Mind changes require explicit operation and meaning evidence.');
       const { action } = awake;
       const current = envelope.context.currentProjectId;
       let outcome = { status: "conversation", route: "conversation" };

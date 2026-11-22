@@ -15,7 +15,7 @@ const routes = new Map([
   ["/style.css", ["style.css", "text/css"]],
   ["/mobile-view.css", ["mobile-view.css", "text/css"]],
   ["/theater/theater.css", ["theater/theater.css", "text/css"]],
-  ...["memory-bridge.mjs", "browser-credentials.mjs", "providers.mjs",
+  ...["living-mind.mjs", "memory-bridge.mjs", "browser-credentials.mjs", "providers.mjs",
     ...["app", "capability", "characters", "continuity", "contracts", "drive-store", "ledger", "providers", "rehearsal", "reports", "restore", "turns"].map(name => `theater/${name}.mjs`)]
     .map(name => [`/${name}`, [name, "text/javascript"]]),
   ...["snail-mini.mjs", "uncle-chatt.mjs", "visual-preparation.mjs", "vendor/pdfjs/pdf.min.mjs", "vendor/pdfjs/pdf.worker.min.mjs", "glasses.mjs", "mind-palace.mjs", "mobile-view.mjs", "emotion-portrait.mjs", "visual-display.mjs", "app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]

@@ -1,15 +1,16 @@
 import { validateAwake } from "./awake-context.mjs";
 import { incidentalConsultation } from './memory-bridge.mjs';
+import {aidaIdentity,restingAffect,scopeId} from './living-mind.mjs';
 
 export const conversationVersion = "0.2";
 export class ConversationTransportError extends Error {}
 export class ConversationValidationError extends Error {}
 const recentLimit = 6;
-const identity = { name: "Aida", relationship: "The user's ongoing conversational companion." };
+const identity = aidaIdentity;
 const memoryKinds = ["facts", "insights", "short", "long"];
 const intents = ["conversation", "recall", "memory_update", "tool_request"];
 const routes = ["reply", "memory_review", "tool_review"];
-const initialAffect = { valence: 0, arousal: 0.2, label: "calm", expression: null };
+const initialAffect = restingAffect;
 
 function hasFields(value, fields) {
   return value !== null && typeof value === "object" && !Array.isArray(value) &&
@@ -109,23 +110,36 @@ export function parseLibrarySuggestion(raw) {
 }
 
 // The provider boundary accepts one envelope and returns JSON text.
-export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [], steward }) {
+export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [], steward,recoverConversation=true }) {
   let recent = recoveredTurns.flatMap(turn => [turn.user, turn.aida]).slice(-recentLimit);
   let lastOrder = recoveredTurns.reduce((latest, turn) => Math.max(latest, turn.order), 0);
   let affect = { ...initialAffect };
   let inFlight = false;
+  const histories=new Map(),affects=new Map();let currentScope='everyday';
+  for(const turn of recoveredTurns){if(!turn.scopeId&&!Object.hasOwn(turn.awakeReceipt??{},'projectId'))continue;const key=turn.scopeId??scopeId(turn.awakeReceipt?.projectId??turn.visualReceipt?.projectId??null);histories.set(key,[...(histories.get(key)??[]),turn.user,turn.aida].slice(-recentLimit));}
+  function selectContext(context){
+    if(!context?.currentState)return;
+    currentScope=context.currentState.scopeId;
+    recent=structuredClone(histories.get(currentScope)??(recoverConversation?context.currentState.conversation:[])??[]).slice(-recentLimit);
+    affect=structuredClone(affects.get(currentScope)??context.currentState.affect??initialAffect);
+  }
+  const handoffRecent=()=>steward?histories.get(scopeId(steward.activeProjectId))??[]:recent;
 
   return {
-    recentForHandoff() { return structuredClone(recent.slice(-4)); },
+    async checkout(options={}){const user={source:'session:checkout',role:'user',text:'Check current scope.'};let context=await steward.assemble([],user);context=await steward.checkoutContext(context,options);selectContext(context);return context;},
+    async enterScope(id){if(inFlight)throw Error('Wait for the active turn.');await steward.releaseScope();await steward.enterScope(id);histories.delete(scopeId(id));affects.delete(scopeId(id));return this.checkout();},
+    async handoff(){if(inFlight)throw Error('Wait for the active turn.');await steward.releaseScope();return {status:'released',scopeId:currentScope};},
+    recentForHandoff() { return structuredClone(handoffRecent().slice(-4)); },
     get recentTurnCount() { return recent.length / 2; },
     omitTurn(turn) {
       recent = recent.filter(entry => entry.source !== turn.user.source && entry.source !== turn.aida.source);
+      histories.set(currentScope,recent);
     },
     async suggestLibrarySearch(workspace) {
       if (inFlight) throw new Error("A conversation turn is already in progress.");
       inFlight = true;
       try {
-        const librarySuggestion = structuredClone({ identity, recent, affect, workspace });
+        const librarySuggestion = structuredClone({ identity, recent:handoffRecent(), affect, workspace });
         return parseLibrarySuggestion(await provider({ librarySuggestion }));
       } finally {
         inFlight = false;
@@ -143,6 +157,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const [saved, canonical] = await Promise.all([memoryStore.recall(), loadCanonicalFacts()]);
         const user = { source: `turn:${turnId}:user`, role: "user", text: message.trim() };
         let context = steward ? await steward.assemble(recent, user, visual ? visual.evidence.projectId ?? null : undefined) : undefined;
+        if(context&&steward.checkoutContext){context=await steward.checkoutContext(context);selectContext(context);}
         if (context && workspaceEvidence) {
           context = { ...context, capabilities: context.capabilities.filter(skill => skill.id !== "search_remember") };
         }
@@ -166,15 +181,28 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           ...(visual ? { visualEvidence: structuredClone(visual.evidence) } : {}),
           ...(context ? { context } : {})
         };
+        let requestContext;
         async function requestReply() {
           let raw;
           try {
-            raw = await provider(structuredClone(envelope), visual?.image);
+            const request=structuredClone(envelope);
+            if(request.context?.globalState){
+              request.context.globalState.facts=[...request.context.globalState.facts,...request.memory.facts];
+              if(request.context.currentState.scopeId==='everyday')request.context.currentState.facts=structuredClone(request.context.globalState.facts);
+              for(const continuity of [request.context.global,request.context.activeProject?.continuity,request.context.lookupProject?.continuity])if(continuity){delete continuity.livingMind;delete continuity.review;}
+              if(request.context.currentState.scopeId==='everyday')delete request.context.globalState;
+              else request.context.globalState.conversation=[];
+            }
+            if(!recoverConversation){
+              const strip=value=>{if(!value||typeof value!=='object')return;for(const key of Object.keys(value))if(key==='conversation')value[key]=[];else strip(value[key]);};strip(request.context);
+            }
+            requestContext=structuredClone(request.context);
+            raw = await provider(request, visual?.image);
+            return parseConversationResponse(raw,request);
           } catch (error) {
             if (error instanceof ConversationTransportError || error instanceof ConversationValidationError) throw error;
             throw new Error("The conversation provider failed. Try again.");
           }
-          return parseConversationResponse(raw, envelope);
         }
         let response;
         try {
@@ -184,6 +212,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         }
         if (response.skillRequest) {
           context = await steward.resolveSkill(context, user, response.skillRequest, envelope, keepInContext);
+          if(steward.checkoutContext){context=await steward.checkoutContext(context);selectContext(context);envelope.memory.recent=structuredClone(recent);envelope.affect=structuredClone(affect);}
           envelope.context = context;
           try {
             response = await requestReply();
@@ -198,9 +227,11 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const receipt = steward ? await steward.apply(envelope, response.awake, permitted) : undefined;
         const aida = { source: `turn:${turnId}:aida`, role: "aida", text: response.reply };
         if (keepInContext) recent = [...recent, user, aida].slice(-recentLimit);
+        histories.set(currentScope,structuredClone(recent));
         lastOrder = order;
         affect = { ...response.affect };
-        return { envelope, response, receipt, turn: { turnId, order, startedAt, completedAt: new Date().toISOString(), user, aida } };
+        affects.set(currentScope,{...affect});
+        return { envelope, response, receipt, requestContext,turn: { turnId, order, startedAt, completedAt: new Date().toISOString(), user, aida,...(context?{scopeId:currentScope}:{}) } };
       } finally {
         inFlight = false;
       }

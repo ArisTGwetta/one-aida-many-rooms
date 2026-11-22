@@ -89,7 +89,22 @@
         </div>
         <pre id="journal-records" hidden></pre>
       </details>
-      <details id="context-records">
+        <details id="living-mind-controls">
+          <summary>Living Mind — current scope and handoff</summary>
+          <label for="mind-scope">Current room</label>
+          <select id="mind-scope" disabled><option value="">Everyday Aida</option></select>
+          <div class="actions">
+            <button id="mind-check" type="button" disabled>Inspect current state</button>
+            <button id="mind-handoff" type="button" disabled>Commit pending state and release</button>
+            <button id="mind-takeover" type="button" disabled>Take over interrupted session</button>
+            <button id="mind-discard" type="button" disabled>Discard uncommitted local update; keep evidence</button>
+          </div>
+          <p>Each scope uses its own current package. Taking over invalidates the other client's checkout; it cannot merge unsaved browser work.</p>
+          <label><input id="mind-state-only" type="checkbox"> On New conversation, exclude recovered conversation text; use current understanding only</label>
+          <p id="mind-status" role="status">Authorize Drive to check current understanding.</p>
+          <details><summary>State evolution — private development evidence</summary><pre id="mind-trace"></pre></details>
+        </details>
+        <details id="context-records">
         <summary>Drive context records</summary>
         <fieldset id="context-controls" disabled>
           <legend>Context initialization</legend>

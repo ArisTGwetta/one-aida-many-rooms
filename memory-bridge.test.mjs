@@ -8,15 +8,17 @@ import { createJournal, makeJournalEvent, dispositionFor } from './recent-journa
 import { checkpointEligible, evolve, validateCheckpoint, validateOperation, safeReceipt, scopeAllowed } from './memory-bridge.mjs';
 import { projectSkills } from './project-skills.mjs';
 import { skillDescriptor } from './skill-registry.mjs';
+import {emptyMind,validateMind} from './living-mind.mjs';
 const folder='fixture-folder', conversationId='11111111-1111-4111-8111-111111111111';
 const blank=()=>({long:[],short:[],recent:[],facts:[],insights:[]});
 function fixture() {
-  const files=new Map(), props={aidaContextInitialized:'1',ctxGlobalV1:'global',ctxProjectsV1:'projects',ctxCapabilitiesV1:'capabilities','ctxProject-atlas':'atlas','ctxReady-atlas':'1'};
+  const files=new Map(), props={aidaContextInitialized:'1',ctxGlobalV1:'global',ctxProjectsV1:'projects',ctxCapabilitiesV1:'capabilities','ctxProject-atlas':'atlas','ctxReady-atlas':'1','ctxProject-beta':'beta','ctxReady-beta':'1'};
   for(const [id,name,record] of [
     ['global','aida-context-global.json',{schema_version:1,...blank()}],
-    ['projects','aida-context-projects.json',{schema_version:1,projects:[{id:'atlas',name:'Atlas',description:'Synthetic fictional project.',status:'active',routingSummary:'Synthetic story.',scope:'fictional'}]}],
+    ['projects','aida-context-projects.json',{schema_version:1,projects:['atlas','beta'].map(id=>({id,name:id==='atlas'?'Atlas':'Beta',description:'Synthetic fictional project.',status:'active',routingSummary:'Synthetic story.',scope:'fictional'}))}],
     ['capabilities','aida-context-capabilities.json',{schema_version:1,capabilities:[]}],
-    ['atlas','aida-context-project-atlas.json',{schema_version:1,projectId:'atlas',scope:'fictional',...blank(),evidence:[{source:'creation:1',text:'Synthetic original project authorization.'}]}]
+    ['atlas','aida-context-project-atlas.json',{schema_version:1,projectId:'atlas',scope:'fictional',...blank(),evidence:[{source:'creation:1',text:'Synthetic original project authorization.'}]}],
+    ['beta','aida-context-project-beta.json',{schema_version:1,projectId:'beta',scope:'fictional',...blank()}]
   ])files.set(id,{id,name,record,parents:[folder],appProperties:{aidaMemory:'context-v1'},version:1});
   let failure=null,race=null,serial=0;const writes=[],requests=[];
   const fetchRequest=async(input,options={})=>{
@@ -35,7 +37,8 @@ function fixture() {
     }
     if(url.searchParams.has('q')){
       const q=url.searchParams.get('q'),name=/name = '([^']+)'/.exec(q)?.[1],conv=/key='conversation' and value='([^']+)'/.exec(q)?.[1];
-      let result=[...files.values()].filter(f=>name?f.name===name:f.appProperties.aidaMemory==='recent-v1'&&(!conv||f.appProperties.conversation===conv));
+      let result=[...files.values()].filter(f=>name?f.name===name:['recent-v1','recent-project-v1'].includes(f.appProperties.aidaMemory)&&(!conv||f.appProperties.conversation===conv));
+      if(!name&&!q.includes("value='recent-project-v1'"))result=result.filter(f=>f.appProperties.aidaMemory==='recent-v1');
       result.reverse();const size=+(url.searchParams.get('pageSize')??10),offset=+(url.searchParams.get('pageToken')??0);
       return Response.json({files:result.slice(offset,offset+size).map(f=>({id:f.id,appProperties:f.appProperties})),...(result.length>offset+size?{nextPageToken:String(offset+size)}:{})});
     }
@@ -56,9 +59,9 @@ function fixture() {
 }
 const unit=(id,text,source,kind='interpretation',replaces=null)=>({id,kind,text,sources:[source],replaces});
 const change=(e,scope,layer,text,operation,meaning)=>({scope,layer,text,operation,meaning,sources:[e.user.source],rationale:'A meaningful synthetic development.'});
-function chat(source, propose=()=>({}), bindings=[]) {
-  let calls=0,last; const steward=createAwakeSteward(source,{skills:projectSkills(source,bindings)});
-  const session=createConversationSession({steward,memoryStore:{recall:async()=>null},provider:async e=>{
+function chat(source, propose=()=>({}), bindings=[],options={}) {
+  let calls=0,last; const steward=createAwakeSteward(source,{skills:projectSkills(source,bindings),sessionId:options.sessionId??null});
+  const session=createConversationSession({steward,memoryStore:{recall:async()=>null},recoverConversation:options.recoverConversation??true,provider:async e=>{
     calls++;last=e;const proposed=propose(e);
     if(proposed.skillRequest)return JSON.stringify(proposed);
     return JSON.stringify({version:'0.2',reply:'Synthetic conversational reply.',intent:'conversation',route:'reply',affect:e.affect,
@@ -208,7 +211,7 @@ test('the actual chat persistence handler retains pending work and verifies retr
   const status={textContent:''},journalStatus={textContent:''};
   const harness=runInNewContext(`let pending=initial;${app.slice(start,end)};({savePending,get pending(){return pending;}})`,{
     initial:{result,turn:{...result.turn,conversationId},disposition:'candidate'},contextSource:client.source,journal:client.journal,
-    journalReceipt,makeJournalEvent,conversationId,journalStatus,byId:()=>status,Date,JSON,Error
+    journalReceipt,makeJournalEvent,conversationId,journalStatus,byId:id=>id==='context-status'?status:{textContent:''},mindTrace:()=>{},Date,JSON,Error
   });
   let fail=true;f.fail((_record,phase)=>{if(phase==='context-before'&&fail){fail=false;return true;}return false;});
   await assert.rejects(harness.savePending());assert.ok(harness.pending.journalVerified);
@@ -256,4 +259,96 @@ test('fresh clients identify journal-first pending work and scoped evidence retr
   const registry=projectSkills(fresh.source),context=await fresh.source.load();
   const evidence=await registry.dispatch({id:'find_project',version:2,input:{projectId:'atlas',operation:'evidence',evidence:'Atlas',source:'creation:1'}},{user:{text:'Show Atlas evidence'},context},'read');
   assert.equal(evidence.evidence.entries[0].text,'Synthetic original project authorization.');
+});
+
+test('one Living Mind engine commits Everyday and project packages, handoffs and cold recovery without raw RECENT',async()=>{
+  const f=fixture(),client=f.open();
+  const c=chat(client.source,e=>({rebuild:'meaningful_event',changes:[change(e,e.context.currentProjectId?'project':'global','short',e.context.currentProjectId?'Private project next step.':'Everyday next step.','EXPAND',[unit(e.context.currentProjectId?'project-step':'global-step',e.context.currentProjectId?'Private plan.':'General plan.',e.user.source)])]}),[],{sessionId:'desktop'});
+  await c.session.checkout();
+  const g=await c.session.send('SYNTHETIC_RAW_GLOBAL: agree on our general plan.');await commit(client,await stage(client,g));
+  assert.equal(f.files.get('global').record.livingMind.meaningRevision,1);
+  await c.session.enterScope('atlas');const p=await c.session.send('SYNTHETIC_RAW_PRIVATE: agree on the project plan.');const pending=await stage(client,p);await commit(client,pending);
+  const project=f.files.get('atlas').record;assert.equal(project.livingMind.scopeId,'project:atlas');assert.equal(project.short.length,1);
+  assert.equal(f.files.get('global').record.livingMind.checkout,null);
+  assert.equal(f.files.get(pending.fileId).appProperties.aidaMemory,'recent-project-v1');
+  assert.ok((await client.journal.sleepEvidence()).entries.every(entry=>entry.event.turns.every(turn=>turn.scopeId==='everyday')));
+  assert.equal(project.livingMind.affect.label,p.response.affect.label);
+  assert.ok(!JSON.stringify(f.files.get('global').record).includes('SYNTHETIC_RAW_PRIVATE'));
+  await c.session.enterScope('beta');await c.session.send('What is our situation here?');
+  assert.ok(!JSON.stringify(c.last).includes('SYNTHETIC_RAW_PRIVATE'));assert.equal(c.last.context.currentState.scopeId,'project:beta');
+  await c.session.handoff();
+  const fresh=f.open(),cold=chat(fresh.source,()=>({}),[],{sessionId:'phone',recoverConversation:false});
+  await cold.session.enterScope('atlas');await cold.session.send('Resume our work.');
+  assert.equal(cold.last.context.currentState.short[0].text,'Private project next step.');
+  assert.equal(cold.last.context.currentState.orientation.focus[0],'Private project next step.');
+  assert.equal(cold.last.context.globalState.short[0].text,'Everyday next step.');
+  assert.equal(cold.last.context.currentState.identity.name,cold.last.identity.name);
+  assert.deepEqual(cold.last.memory.recent,[]);assert.deepEqual(cold.last.context.currentState.conversation,[]);
+  assert.ok(!JSON.stringify(cold.last).includes('SYNTHETIC_RAW_PRIVATE'));
+  assert.equal(await fresh.source.checkpointStatus(pending.checkpoint),'verified');
+});
+
+test('scope-owned affect and pending reflections survive the shared current-state commit; malformed identity or scope metadata fails closed',async()=>{
+  const f=fixture();const mind=emptyMind('atlas');mind.affect={valence:-0.2,arousal:0.4,label:'concerned',expression:null};mind.pendingReflections=[{id:'reflection-1',text:'Consider the unresolved synthetic question.',sources:['creation:1']}];
+  f.files.get('atlas').record.livingMind=mind;
+  const client=f.open(),c=chat(client.source,e=>({rebuild:'meaningful_event',changes:[change(e,'project','short','A current project concern.','EXPAND',[unit('concern','A project concern.',e.user.source,'uncertainty')])]}),[],{sessionId:'reader'});
+  await c.session.enterScope('atlas');const result=await c.session.send('A meaningful project concern.');await commit(client,await stage(client,result));
+  assert.equal(c.last.affect.label,'concerned');assert.equal(f.files.get('atlas').record.livingMind.pendingReflections[0].id,'reflection-1');
+  assert.ok(!JSON.stringify(f.files.get('global').record).includes('reflection-1'));
+  assert.throws(()=>validateMind({...mind,identity:{name:'Another identity'}},'atlas'),/Invalid Living Mind/);
+  assert.throws(()=>validateMind(mind,'beta'),/Invalid Living Mind/);
+  const bad=f.open();f.files.get('atlas').record.livingMind={...mind,scopeId:'project:beta'};
+  await assert.rejects(bad.source.project('atlas'),/Invalid Living Mind/);
+});
+
+test('no-change commits interaction/affect without advancing meaning; natural correction preserves other understanding after restart',async()=>{
+  const f=fixture(),client=f.open();let action='initial';
+  const c=chat(client.source,e=>action==='keep'?{}:{rebuild:action==='initial'?'meaningful_event':'correction',changes:[change(e,'global','short',action==='initial'?'Keep the goal; the code is the old one.':'Keep the goal; the code is the new one.',action==='initial'?'EXPAND':'REVISE',action==='initial'?[unit('goal','Keep the shared goal.',e.user.source),unit('old-code','Synthetic old code.',e.user.source,'claim')]:[unit('new-code','Synthetic corrected code.',e.user.source,'claim','old-code')])]} ,[],{sessionId:'session-a'});
+  const first=await c.session.send('A meaningful synthetic goal and code.');await commit(client,await stage(client,first));
+  action='keep';const keep=await c.session.send('Keep this conversation handoff.',{memoryDisposition:'candidate'});
+  await commit(client,await stage(client,keep,'candidate'));
+  let doc=f.files.get('global').record;assert.equal(doc.memoryBridge.revision,2);assert.equal(doc.livingMind.meaningRevision,1);assert.equal(doc.livingMind.lastInteractionAt,keep.turn.completedAt);assert.equal(doc.livingMind.lastMeaningfulAt,first.turn.completedAt);
+  action='correct';const corrected=await c.session.send('Correction: the synthetic code changed; the goal stays.');await commit(client,await stage(client,corrected));
+  doc=f.files.get('global').record;assert.deepEqual(doc.short[0].meaning.map(m=>m.id),['goal','new-code']);
+  await c.session.handoff();
+  const fresh=chat(f.open().source,()=>({}),[],{sessionId:'session-b',recoverConversation:false});await fresh.session.send('Continue.');
+  assert.equal(fresh.last.context.currentState.short[0].text,'Keep the goal; the code is the new one.');
+  assert.equal(fresh.last.context.currentState.meaningRevision,2);assert.equal(fresh.last.memory.recent.length,0);
+});
+
+test('checkout warns before provider calls; explicit takeover invalidates an old client and preserves authoritative packages',async()=>{
+  const f=fixture(),left=f.open(),right=f.open(),a=chat(left.source,()=>({}),[],{sessionId:'left'}),b=chat(right.source,()=>({}),[],{sessionId:'right'});
+  await a.session.checkout();
+  await assert.rejects(b.session.send('Continue.'),e=>e.diagnostic==='mind_checkout_conflict');assert.equal(b.calls,0);
+  await b.session.checkout({takeover:true});
+  await assert.rejects(a.session.send('An old client tries again.'),e=>e.diagnostic==='mind_checkout_conflict');assert.equal(a.calls,0);
+  await b.session.handoff();const c=chat(f.open().source,()=>({}),[],{sessionId:'later'});await c.session.send('Continue.');assert.equal(c.calls,1);
+});
+
+test('a response completed before takeover cannot overwrite a newer package; its saved evidence remains a non-current draft',async()=>{
+  const f=fixture(),left=f.open(),right=f.open();
+  const a=chat(left.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','An old uncommitted draft.','EXPAND',[unit('old-draft','An old draft.',e.user.source)])]}),[],{sessionId:'old-device'});
+  const old=await stage(left,await a.session.send('A synthetic draft from the first device.'));
+  const b=chat(right.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','The latest verified understanding.','EXPAND',[unit('current','The latest verified understanding.',e.user.source)])]}),[],{sessionId:'new-device'});
+  await b.session.checkout({takeover:true});const latest=await stage(right,await b.session.send('A newer synthetic decision.'));await commit(right,latest);
+  await assert.rejects(commit(left,old),/Checkout changed/);
+  assert.equal(f.files.get('global').record.short[0].text,'The latest verified understanding.');assert.equal(a.calls,1);
+  assert.equal(await left.source.checkpointStatus(old.checkpoint),'newer_state');
+  assert.ok(old.fileId&&f.files.has(old.fileId));
+});
+
+test('room source support cannot be copied into a different journal scope',async()=>{
+  const f=fixture(),client=f.open(),c=chat(client.source,()=>({}));
+  await c.session.enterScope('atlas');const project=await c.session.send('Private synthetic room context.');
+  await c.session.enterScope(null);const general=await c.session.send('Everyday conversation.');
+  assert.throws(()=>makeJournalEvent(conversationId,{...general.turn,conversationId},'candidate',{...project.turn,conversationId}),/cannot cross room scopes/);
+  assert.ok(!JSON.stringify(c.last).includes('Private synthetic room context.'));
+});
+
+test('a quick question under a real checkout changes no personal state, despite an over-eager proposal',async()=>{
+  const f=fixture(),client=f.open(),c=chat(client.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','Unwanted incidental note.','EXPAND',[unit('incidental','Incidental note.',e.user.source)])]}),[],{sessionId:'ordinary-session'});
+  const result=await c.session.send('How do you spell rhythm?',{memoryDisposition:'ephemeral'});
+  assert.equal(checkpointEligible(result,'ephemeral'),false);
+  const doc=f.files.get('global').record;assert.deepEqual(doc.short,[]);assert.equal(doc.livingMind.meaningRevision,0);assert.deepEqual(doc.livingMind.conversation,[]);
+  assert.equal(f.writes.filter(w=>w.kind==='journal').length,0);assert.equal(doc.livingMind.lastInteractionAt,null);
 });

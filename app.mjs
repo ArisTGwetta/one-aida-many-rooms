@@ -75,6 +75,17 @@ async function setupChat(folderId) {
   const journal = createJournal(folderId, () => token);
   const sleepStore = createSleepStore(folderId, () => token);
   const contextSource = createContextSource(folderId, () => token);
+  const livingSessionId=crypto.randomUUID();
+  let mindEvidence={};
+  function mindTrace(phase,value){if(phase==='checked_out')mindEvidence={};mindEvidence[phase]=value;byId('mind-trace').textContent=JSON.stringify({phase,...mindEvidence},null,2);}
+  function mindContext(context){
+    const select=byId('mind-scope');select.replaceChildren();
+    for(const item of [{id:'',name:'Everyday Aida'},...context.projects]){const option=document.createElement('option');option.value=item.id;option.textContent=item.name;select.append(option);}
+    select.value=context.currentProjectId??'';
+    byId('mind-status').textContent=`${context.currentState.scopeId}: checked out; committed revision ${context.currentState.revision}, meaning revision ${context.currentState.meaningRevision}.`;
+    mindTrace('checked_out',{current:context.currentState,global:context.globalState});
+    return 'Current state loaded from Drive.';
+  }
   const projectPanel = byId("project-preview");
   const projectData = byId("project-preview-data");
   const projectStatus = byId("project-save-status");
@@ -195,6 +206,8 @@ async function setupChat(folderId) {
     byId("project-confirm").disabled = running || !token || !projectPreview;
     byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
+    for(const id of ['mind-scope','mind-check','mind-takeover','mind-handoff'])byId(id).disabled=running||!token||!session||(Boolean(pending)&&id!=='mind-handoff');
+    byId('mind-discard').disabled=running||!session||!pending;
     byId("sleep-controls").disabled = running || !token;
     for (const id of ["journal-resume", "journal-new", "journal-inspect", "journal-older"]) {
       byId(id).disabled = running || !token || Boolean(pending);
@@ -396,7 +409,8 @@ async function setupChat(folderId) {
     showSelection();
     session = createConversationSession({
       memoryStore: store,
-      steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: turns, skills })),
+      steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: turns, skills,sessionId:livingSessionId })),
+      recoverConversation:!byId('mind-state-only').checked,
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope, image) {
@@ -431,12 +445,19 @@ async function setupChat(folderId) {
     if (checkpoint) {
       await contextSource.load();
       const state = await contextSource.checkpointStatus(checkpoint);
+      if(state==='newer_state'){
+        session.omitTurn(latest);
+        mindContext(await session.checkout());
+        mindTrace('recovery_warning',{operationId:checkpoint.operationId,status:'newer_authoritative_state',evidenceRetained:true});
+        return 'Newer current understanding recovered. An older journal update was not replayed; its evidence remains in Drive.';
+      }
       if (state !== 'verified') {
         const containing = recovered.entries.find(entry=>entry.event.turns.some(turn=>turn.turnId===checkpoint.operationId));
         pending = { event:containing.event,fileId:containing.fileId,journalVerified:containing.fileId,checkpoint };
         return 'Recovered conversation; its memory checkpoint is unconfirmed. Retry persistence without another model call.';
       }
     }
+    mindContext(await session.checkout());
     return recovered.turns.length
       ? `Recovered ${recovered.turns.length} exchange(s) from Drive.`
       : "No saved exchanges for this conversation.";
@@ -462,6 +483,8 @@ async function setupChat(folderId) {
       if (pending.checkpoint) {
         const verified = await contextSource.commitCheckpoint(pending.checkpoint,'drive:'+stored.fileId);
         byId('context-status').textContent = 'Memory checkpoint verified: ' + JSON.stringify(verified.records);
+        byId('mind-status').textContent='Current state committed and verified in Drive.';
+        mindTrace('committed',{operationId:verified.operationId,scopes:verified.records});
       }
       pending = undefined;
       return `Saved and verified in Drive. File ID ${stored.fileId}.`;
@@ -475,7 +498,9 @@ async function setupChat(folderId) {
   byId("journal-resume").addEventListener("click", () =>
     run("Recovering conversation from Drive…", () => recover(conversationField.value.trim()), journalStatus));
   byId("journal-new").addEventListener("click", () => run("Starting a conversation…", async () => {
+    await session.handoff();
     resetChat({ id: crypto.randomUUID(), turns: [], entries: [] });
+    mindContext(await session.checkout());
     return "New conversation.";
   }, journalStatus));
   async function inspect(cursor) {
@@ -490,6 +515,11 @@ async function setupChat(folderId) {
   byId("journal-inspect").addEventListener("click", () => run("Reading saved exchanges…", () => inspect(), journalStatus));
   older.addEventListener("click", () => run("Reading older exchanges…", () => inspect(nextPage), journalStatus));
   retry.addEventListener("click", () => run("Retrying journal save…", savePending, journalStatus));
+  byId('mind-check').addEventListener('click',()=>run('Loading authoritative current state…',async()=>mindContext(await session.checkout()),byId('mind-status')));
+  byId('mind-takeover').addEventListener('click',()=>run('Taking over this scope; other client writes will be rejected…',async()=>mindContext(await session.checkout({takeover:true})),byId('mind-status')));
+  byId('mind-handoff').addEventListener('click',()=>run('Verifying pending work and releasing current scope…',async()=>{if(pending)await savePending();const result=await session.handoff();mindTrace('handoff',result);return 'Verified current state retained. Checkout released for another device.';},byId('mind-status')));
+  byId('mind-discard').addEventListener('click',()=>run('Discarding the uncommitted local update only…',async()=>{const old=pending;if(!old)return 'No pending update.';const turn=old.turn??old.event?.turns.find(t=>t.turnId===(old.checkpoint?.operationId??old.event.eventId));if(turn)session.omitTurn(turn);pending=undefined;mindTrace('discarded_uncommitted',{operationId:old.checkpoint?.operationId??old.event?.eventId,evidenceFileId:old.journalVerified??old.fileId??null,canonicalStateUnchanged:true});return 'Uncommitted local update discarded. Drive evidence and verified current state are unchanged.';},byId('mind-status')));
+  byId('mind-scope').addEventListener('change',()=>run('Loading selected room continuity…',async()=>{if(pending)await savePending();clearProjectPreview();palace.clear();glasses.reset();return mindContext(await session.enterScope(byId('mind-scope').value||null));},byId('mind-status')));
 
   byId("chat-form").addEventListener("submit", event => {
     event.preventDefault();
@@ -506,7 +536,7 @@ async function setupChat(folderId) {
       return;
     }
     const chosenDisposition = dispositionFor(submitted, retention.value);
-    const supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
+    let supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
       providerCalls = [];
       showBudget();
@@ -530,6 +560,7 @@ async function setupChat(folderId) {
         projectPanel.hidden = false;
       }
       const turn = { ...result.turn, conversationId };
+      if(supportingTurn&&(supportingTurn.scopeId??'everyday')!==(turn.scopeId??'everyday'))supportingTurn=undefined;
       const inspectionReceipt = visualReceipt(result);
       if (inspectionReceipt && chosenDisposition !== "excluded") turn.visualReceipt = inspectionReceipt;
       appendExchange(turn);
@@ -540,6 +571,8 @@ async function setupChat(folderId) {
         valence: result.response.affect.valence, arousal: result.response.affect.arousal
       } }));
       const needsCheckpoint = checkpointEligible(result,chosenDisposition);
+      byId('mind-scope').value=result.envelope.context.currentProjectId??'';
+      mindTrace('proposed',{scopeId:result.turn.scopeId,modelRequest:result.requestContext,previous:result.envelope.context.currentState,proposed:result.receipt.proposed??[],validation:result.receipt.rejected??[],persistence:needsCheckpoint?'pending':'no durable update'});
       disposition = needsCheckpoint && chosenDisposition === 'ephemeral' ? 'candidate' : chosenDisposition;
       preceding = { turn, disposition };
       sources = [turn.user.source, turn.aida.source];

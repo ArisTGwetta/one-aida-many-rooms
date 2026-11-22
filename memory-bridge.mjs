@@ -1,5 +1,6 @@
 // Pure interpretation/receipt validation. Storage remains in the existing context
 // records and RECENT journal; this module has no transport or persistence.
+import { validateMind } from './living-mind.mjs';
 export const views = ['long', 'short', 'recent'];
 export const incidentalConsultation = text => /^\s*(?:how\s+do\s+(?:you|i)\s+spell|spell\b|what\s+(?:is|are|does)\b)[^\n]*\?\s*$/i.test(text);
 const text = (v, n) => typeof v === 'string' && !!v.trim() && v.length <= n;
@@ -77,8 +78,8 @@ export function checkpointEligible(result, chosen) {
   // Conservative fallback for known disposable consultations. A model cannot turn
   // an incidental spelling/definition answer into a retained personal profile.
   if(incidentalConsultation(result.turn.user.text)&&chosen==='ephemeral')return false;
-  return !!(result.receipt.applied.some(c=>c.operation&&c.operation!=='KEEP')||
-    result.receipt.rebuild&&result.receipt.rebuild!=='threshold'&&(result.receipt.candidates.length||result.receipt.contradictions.length));
+  return chosen==='candidate'||!!(result.receipt.applied.some(c=>c.operation&&c.operation!=='KEEP')||
+    result.receipt.rebuild&&result.receipt.rebuild!=='threshold');
 }
 export async function fingerprint(value) {
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value)));
@@ -99,7 +100,7 @@ export function validateCheckpoint(value) {
   if(!exact(value,['version','operationId','plans'])||value.version!==1||!text(value.operationId,64)||!Array.isArray(value.plans)||!value.plans.length||value.plans.length>2)throw Error('Invalid memory checkpoint.');
   const scopes=new Set();
   for(const plan of value.plans) {
-    if(!exact(plan,['scope','projectId','fileId','baseHash','revision','before','after','review','evidence','previousJournalReference'])||
+    if(!exact(plan,['scope','projectId','fileId','baseHash','revision','before','after','review','evidence','previousJournalReference',...(Object.hasOwn(plan,'mind')?['mind']:[])])||
         !['global','project'].includes(plan.scope)||(plan.scope==='global'?plan.projectId!==null:!id(plan.projectId))||
         !/^[\w-]+$/.test(plan.fileId)||!/^[a-f0-9]{64}$/.test(plan.baseHash)||!Number.isInteger(plan.revision)||plan.revision<0||
         !(plan.previousJournalReference===null||/^drive:[\w-]+$/.test(plan.previousJournalReference))||
@@ -107,7 +108,8 @@ export function validateCheckpoint(value) {
         !plan.review)throw Error('Invalid scoped checkpoint.');
     const key=plan.scope+':'+plan.projectId;if(scopes.has(key))throw Error('Duplicate checkpoint scope.');scopes.add(key);
     validateSnapshot(plan.before);validateSnapshot(plan.after);
-    if(views.some(layer=>plan.after[layer].length>1))throw Error('A current view must be a single interpretation.');
+    if(views.some(layer=>plan.after[layer].length>1&&JSON.stringify(plan.after[layer])!==JSON.stringify(plan.before[layer])))throw Error('An updated current view must be a single interpretation.');
+    if(plan.mind)validateMind(plan.mind,plan.projectId);
     if(['facts','insights'].some(layer=>JSON.stringify(plan.before[layer])!==JSON.stringify(plan.after[layer])))
       throw Error('Working checkpoints cannot promote canonical facts or insights.');
     validateReview(plan.review);

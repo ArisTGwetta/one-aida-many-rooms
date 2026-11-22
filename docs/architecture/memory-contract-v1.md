@@ -1,6 +1,7 @@
 # Aida memory contract v1
 
-**Version 1.0.0 — authoritative architectural requirements, November 21, 2026.**
+**Version 1.1.0 — authoritative architectural requirements.**
+Original reconciliation: November 21, 2026. Living Mind refinement: November 22.
 This is not a declaration that the implementation satisfies every requirement.
 Envelope `0.2`, context `schema_version: 1` and Theater schemas are separate
 implementation versions. This documentation changes none of them.
@@ -90,6 +91,30 @@ rewrite requirements to match incomplete code or turn prototype limits into poli
     turns. Diagnostics must not become a permanent conversation archive.
 
 ## Required lifecycle
+
+### Living Mind and independent reflective rhythms
+
+Mission 008 refines the implementation into two asynchronous rhythms without
+discarding the fourteen requirements. During ordinary conversation, the same
+Living Mind engine checks out a complete, versioned current package for Everyday
+or a stable project ID. It includes the same global Aida identity and principles,
+LONG, SHORT, RECENT/handoff, relevant attributed beliefs, affect, orientation,
+historical references and available pending reflections. Projects are not separate
+identities. Project state remains isolated and can be restored after inactivity.
+
+Reflective Crawler, Diary, Librarian and Steward are independent modular services,
+not a mandatory linear pipeline. The Crawler preserves eligible source evidence;
+Diary records events, significance and unfinished questions; Librarian organizes
+beliefs, relationships, patterns and historical retrieval; Steward validates
+authority, sources, versions and commits and can offer pending reflections.
+Diary/Librarian do not exist merely to manufacture LONG/SHORT. Aida may consider
+reflections on return without being forced to raise them immediately. Implementing
+the full reflective system is not required for the first Living Mind milestone.
+
+Historical evidence, earlier interpretations and current understanding must remain
+distinct. Every scope uses the same schema/update/persistence/recovery mechanism.
+Global learning from projects requires explicit authorized scope transfer. The
+following semantic dependency is retained within the Living Mind rhythm.
 
 ```text
 eligible conversation / authorized receipt

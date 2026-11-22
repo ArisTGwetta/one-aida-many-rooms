@@ -4,6 +4,9 @@ import { validateCheckpoint } from './memory-bridge.mjs';
 export const recentTurns = 3;
 const day = 24 * 60 * 60 * 1000;
 const marker = "recent-v1";
+const projectMarker='recent-project-v1';
+const eventScope=event=>event.turns.at(-1).scopeId??'everyday';
+const eventMarker=event=>eventScope(event).startsWith('project:')?projectMarker:marker;
 const uuid = value => typeof value === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 const timestamp = value => typeof value === "string" && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
 const property = (key, value) => `appProperties has { key='${key}' and value='${value}' }`;
@@ -69,6 +72,7 @@ function validateEvent(event) {
     throw new Error("A Drive journal entry has invalid metadata.");
   }
   const ids = new Set();
+  if(turns.some(turn=>(turn.scopeId??'everyday')!==eventScope(event)))throw Error('Journal support cannot cross room scopes.');
   for (const turn of turns) {
     if (!uuid(turn?.turnId) || ids.has(turn.turnId) || !Number.isSafeInteger(turn.order) || !timestamp(turn.startedAt) ||
         !timestamp(turn.completedAt) || turn.conversationId !== event.conversationId ||
@@ -79,6 +83,7 @@ function validateEvent(event) {
       throw new Error("A Drive journal turn has invalid source evidence.");
     }
     ids.add(turn.turnId);
+    if(turn.scopeId!==undefined&&!/^(?:everyday|project:[a-z0-9][a-z0-9_-]{0,63})$/.test(turn.scopeId))throw Error('Invalid conversation scope.');
     if (turn.awakeReceipt?.bridge) {
       if(event.disposition!=='candidate')throw Error('Permanent checkpoints require nonexpiring journal evidence.');
       const checkpoint = validateCheckpoint(turn.awakeReceipt.bridge);
@@ -122,11 +127,12 @@ export function collectRecent(entries) {
 
 export function createJournal(folderId, token, fetchRequest = fetch, now = Date.now) {
   const drive = createDriveClient(folderId, token, fetchRequest);
-  const base = `'${folderId}' in parents and trashed = false and mimeType = 'application/json' and ${property("aidaMemory", marker)}`;
+  const folderBase=`'${folderId}' in parents and trashed = false and mimeType = 'application/json'`;
+  const base = `${folderBase} and (${property("aidaMemory", marker)} or ${property('aidaMemory',projectMarker)})`;
 
-  async function list(filter, pageSize, cursor) {
+  async function list(filter, pageSize, cursor,globalOnly=false) {
     const query = new URLSearchParams({
-      q: `${base} and ${filter}`, pageSize: String(pageSize),
+      q: `${globalOnly?folderBase+' and '+property('aidaMemory',marker):base} and ${filter}`, pageSize: String(pageSize),
       orderBy: "createdTime desc,name desc",
       fields: "files(id,appProperties),incompleteSearch,nextPageToken"
     });
@@ -139,7 +145,7 @@ export function createJournal(folderId, token, fetchRequest = fetch, now = Date.
   async function read(file) {
     const event = validateEvent(await drive.readJson(file.id));
     const props = file.appProperties;
-    if (props?.aidaMemory !== marker || props.event !== event.eventId || props.conversation !== event.conversationId ||
+    if (props?.aidaMemory !== eventMarker(event) || props.event !== event.eventId || props.conversation !== event.conversationId ||
         props.disposition !== event.disposition) throw new Error("Drive journal metadata does not match its contents.");
     return { fileId: file.id, event };
   }
@@ -162,12 +168,13 @@ export function createJournal(folderId, token, fetchRequest = fetch, now = Date.
     async readReference(reference) {
       if (!/^drive:[\w-]+$/.test(reference)) throw Error('Invalid journal evidence reference.');
       const fileId = reference.slice(6), meta = await drive.metadata(fileId);
-      if (meta.id !== fileId || !meta.parents?.includes(folderId) || meta.trashed !== false || meta.appProperties?.aidaMemory !== marker)
+      if (meta.id !== fileId || !meta.parents?.includes(folderId) || meta.trashed !== false || ![marker,projectMarker].includes(meta.appProperties?.aidaMemory))
         throw Error('Journal evidence is outside the owned store.');
       return read({id:fileId,appProperties:meta.appProperties});
     },
     async sleepEvidence(cursor) {
-      const result = await list(eligibleFilter(), 12, cursor);
+      // The existing global Sleep pipeline cannot reconcile project scopes yet.
+      const result = await list(eligibleFilter(), 12, cursor,true);
       const entries = await Promise.all(result.files.map(read));
       return {
         entries: entries.filter(({ event }) => !event.expiresAt || Date.parse(event.expiresAt) > now()),
@@ -195,7 +202,7 @@ export function createJournal(folderId, token, fetchRequest = fetch, now = Date.
       if (event.expiresAt && Date.parse(event.expiresAt) <= now()) throw new Error("The provisional journal entry expired.");
       // Preserve the reserved ID across retries, including a lost upload response.
       pending.fileId ??= await drive.generateId();
-      const props = { aidaMemory: marker, conversation: event.conversationId, event: event.eventId, disposition: event.disposition };
+      const props = { aidaMemory: eventMarker(event), conversation: event.conversationId, event: event.eventId, disposition: event.disposition,...(event.turns.at(-1).scopeId?{scope:eventScope(event)}:{}) };
       await drive.uploadJson(pending.fileId, `aida-recent-${event.eventId}.json`, props, event);
       const stored = await read({ id: pending.fileId, appProperties: props });
       if (JSON.stringify(stored.event) !== JSON.stringify(event)) throw new Error("Drive journal readback did not match the saved exchange.");
