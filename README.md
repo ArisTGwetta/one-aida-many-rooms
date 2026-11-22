@@ -1,5 +1,22 @@
 # One Aida, Many Rooms
 
+**Authoritative development home:** `C:/Users/arist/Documents/Codex/One-Aida-Many-Rooms-Canonical`,
+branch **`aida-v1`**, repository **`ArisTGwetta/one-aida-many-rooms`**.
+Use this home, not an old preview/worktree folder. On another machine use
+`git clone --branch aida-v1 https://github.com/ArisTGwetta/one-aida-many-rooms.git`.
+
+Read [repository instructions](AGENTS.md), the authoritative
+[memory contract v1](docs/architecture/memory-contract-v1.md), and the
+[mission ledger](docs/missions/ledger.md). Prototype limits below describe code,
+not reductions of the contract. Automatic ordinary-chat cold-start and correction
+behavior remain live acceptance gates; component tests do not prove working memory.
+
+This static ES-module application needs no compilation or install step. Run
+`node --test` and `node dev-server.mjs` here, then open `http://127.0.0.1:8787/`.
+Static loading needs no provider call. Local Google OAuth is not assumed authorized.
+The retained ordinary preview is https://aristgwetta.github.io/one-aida-many-rooms/preview/c1c6fb5/ .
+This consolidation does not replace it or change OAuth/Drive.
+
 Aida's First Memory saves one fact as a JSON file in Google Drive and reads it back with its Drive file ID and UTC timestamp. Once saved, the fact is read-only in this prototype. Repeating the same save returns the stored record. Recall always reads Drive.
 
 ## Local checks
@@ -51,7 +68,7 @@ Use **Drive context records → Check context records** after authorizing Drive.
 | `aida-context-project-<id>.json` | The same continuity arrays and a matching `projectId`. |
 | `aida-context-capabilities.json` | A `capabilities` array with `id`, `purpose`, `route`, `availability`, `authorization`, and an `arguments` array of `name`, `description`, and `required`. |
 
-Use a direct request such as “Switch to Atlas” to select a registered project. The conversation always supports continuing and asking for help. Catalog routes are named handoffs for review or confirmation. Execution of external capabilities and automatic discovery remain future work.
+Use a direct request such as “Switch to Atlas” to select a registered project. Ordinary conversation and help are built in. Catalog metadata advertises capabilities; trusted registered handlers determine execution. Project read and confirmed-creation paths exist; general automatic discovery remains future work.
 
 To keep a fictional story as a project, ask Aida to create a named fictional project and preserve the selected story context. Aida can cite the current request and exchanges in the active six-message context. Review the proposed project, continuity, and exact source excerpts before selecting **Confirm and save project**. LONG captures enduring purpose, SHORT captures the current situation, and RECENT captures meaningful developments. Unsupported sections stay empty.
 

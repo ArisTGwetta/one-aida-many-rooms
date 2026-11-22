@@ -1,5 +1,9 @@
 # Aida conversation envelope v0.2
 
+The authoritative intended behavior is [memory contract v1](docs/architecture/memory-contract-v1.md).
+This document describes wire shapes and implementation stages. Prototype limits
+do not supersede that contract; see the mission ledger for acceptance status.
+
 Aida assembles the request from her own context. The provider returns one JSON object.
 
 ## Request

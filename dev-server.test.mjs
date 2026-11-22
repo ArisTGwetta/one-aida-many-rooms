@@ -2,6 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { handleRequest } from "./dev-server.mjs";
 
+test('canonical local server serves the complete owned UI module graph without exposing source-control or credential files', async()=>{
+  async function get(url) {
+    const result={};await handleRequest({url,method:'GET',headers:{host:'127.0.0.1:8787'}},{
+      writeHead(status,headers){Object.assign(result,{status,headers});},end(body){result.body=body;}
+    });return result;
+  }
+  const pending=['/'],seen=new Set();
+  while(pending.length) {
+    const path=pending.shift();if(seen.has(path))continue;seen.add(path);
+    const response=await get(path);assert.equal(response.status,200,path);
+    const source=String(response.body),links=path==='/'?[...source.matchAll(/(?:src|href)="(\.\/[^"#]+)"/g)]:[...source.matchAll(/(?:from\s*|import\s*\(\s*)["'](\.[^"']+\.mjs)["']/g)];
+    for(const match of links)pending.push(new URL(match[1],'http://127.0.0.1:8787'+path).pathname);
+  }
+  for(const asset of ['/memory-bridge.mjs','/browser-credentials.mjs','/providers.mjs','/theater/turns.mjs','/theater/theater.css'])assert.ok(seen.has(asset),asset);
+  assert.ok(seen.size>30);
+  for(const path of ['/.git/config','/.env','/credentials.local.json','/../AGENTS.md','/theater/turns.test.mjs'])assert.equal((await get(path)).status,404,path);
+});
+
 test("homepage accepts tracking parameters and chat still requires the local origin", async () => {
   async function request(url, method = "GET", headers = {}) {
     const result = {};

@@ -1,5 +1,9 @@
 # Aida's intended memory lifecycle
 
+The normative requirements are now [memory contract v1](docs/architecture/memory-contract-v1.md).
+This file preserves implementation history and known limits. Its deferred features
+and prototype policies are not changes to the agreed architecture.
+
 Aida owns her identity, memory, affect, and conversation envelope. OpenAI is the default reasoning provider. Ollama is an optional provider when its environment is reachable. A provider change preserves the same identity, relevant project context, memory, and current conversation.
 
 A request carries base identity and relationship context, LONG, SHORT, FACTS, INSIGHTS, RECENT, relevant project context, and the current message. The six-message active window starts with up to three eligible exchanges from the current Drive conversation. Subsequent activity can add exchanges in page memory. The first user-entered fact still comes from its existing Drive record.
