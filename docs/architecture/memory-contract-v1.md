@@ -1,12 +1,37 @@
 # Aida memory contract v1
 
-**Version 1.2.0 — authoritative architectural requirements.**
+**Version 1.3.0 — authoritative architectural requirements.**
 Original reconciliation: November 21, 2026. Living Mind refinement: November 22.
 This is not a declaration that the implementation satisfies every requirement.
 Envelope `0.2`, context `schema_version: 1` and Theater schemas are separate
 implementation versions. This documentation changes none of them.
 
 ## Recovery clarification: one engine, two permission modes
+
+### Compulsory reflection, not compulsory remembering
+
+Meaningful changes are eligible immediately, on the conversational turn. Twenty
+turns is a maximum checkpoint interval, not a waiting period. A checkpoint is
+also mandatory at Sleep/handoff and before conversation evidence is compacted or
+discarded. Failed or deferred review preserves its evidence and retry state.
+
+Every checkpoint produces an inspectable, source-grounded review artifact, even
+when no durable personal fact or LONG/SHORT change is warranted. Distinguish
+updated understanding, provisional observation/hypothesis, justified reviewed-
+and-discarded material, and deferred/failed review. An empty changes array alone
+is not an accountable review. Observations, hypotheses and established
+understanding are different epistemic states. Recurring trivial exchanges may
+support an observed pattern without establishing its cause or a personal trait.
+Later evidence can reinforce, explain, revise or retire an observation while its
+earlier uncertainty/provenance remains distinguishable. Sensitive personal topics
+require especially conservative inference and retention.
+
+Review artifacts are not automatic durable memory. Temporary reviews remain
+entirely session-local; meaningful durable interpretations still require the
+existing authorized validation/persistence path. The normal semantic proposal
+path is `awake`, with an explicit versioned evaluation; compatibility candidate
+collections must not compete with it. Session, scope, reset reason, turn sequence,
+review outcome and verified persistence are separate, visible signals.
 
 Everyday Aida and every project use the same Living Mind state schema and
 meaning-update lifecycle. Global identity/personality and skills are shared;

@@ -73,12 +73,13 @@ export function scopeAllowed(item, envelope) {
   return item.sources.length>0&&item.sources.every(ref=>approved.has(ref));
 }
 export function checkpointEligible(result, chosen) {
+  if(result.receipt?.semanticStatus==='deferred')return false;
   if(['excluded','provisional'].includes(chosen)||result.receipt?.outcome?.status==='excluded'||result.envelope.visualEvidence) return false;
   if(!result.receipt||result.receipt.preview||result.envelope.context.lookupProject||result.envelope.context.projectEvidenceRead) return false;
   // Conservative fallback for known disposable consultations. A model cannot turn
   // an incidental spelling/definition answer into a retained personal profile.
   if(incidentalConsultation(result.turn.user.text)&&chosen==='ephemeral')return false;
-  return chosen==='candidate'||!!(result.receipt.applied.some(c=>c.operation&&c.operation!=='KEEP')||
+  return chosen==='candidate'||!!(result.receipt.orientationApplied||result.receipt.applied.some(c=>c.operation&&c.operation!=='KEEP')||
     result.receipt.candidates?.length||result.receipt.contradictions?.length||result.receipt.rebuild&&result.receipt.rebuild!=='threshold');
 }
 export async function fingerprint(value) {

@@ -1,7 +1,7 @@
 import { projectSkills } from "./project-skills.mjs";
 import { createDriveClient } from "./memory.mjs";
 import { createJournal } from './recent-journal.mjs';
-import { currentPackage,initialMind,validateMind,nextMind,mindContents } from './living-mind.mjs';
+import { currentPackage,initialMind,validateMind,nextMind,mindContents,evolveOrientation } from './living-mind.mjs';
 import { changeFields, validateOperation, evolve, validateSnapshot, validateReview, scopeAllowed, fingerprint, validateCheckpoint,validStateReceipt } from './memory-bridge.mjs';
 
 const layers = ["long", "short", "recent", "facts", "insights"];
@@ -37,8 +37,20 @@ export const awakeSchema = object({
   candidates: array(object({ ...item.properties, layer: enumeration("facts", "insights") })),
   contradictions: array(item)
 });
+const evidenceItem=object({text:string,sources});
+export const semanticAwakeSchema=object({...awakeSchema.properties,
+  evaluation:object({version:{type:'integer',enum:[1]},reviewId:string,scopeId:string,
+    decision:enumeration('change','no_change','deferred'),domain:enumeration('everyday','fictional','consultation','uncertain'),outcome:enumeration('updated_understanding','provisional_observation','reviewed_discarded','deferred'),reason:string,sources,
+    assessed:array(enumeration('short','long','orientation','unfinished','contradictions')),coveredSources:array(string),
+    observations:array(object({id:string,kind:enumeration('observation','hypothesis'),text:string,sources,relatesTo:array(string),disposition:enumeration('carry','discard')}))}),
+  orientation:object({focus:{anyOf:[evidenceItem,{type:'null'}]},unfinished:array(object({operation:enumeration('add','resolve'),text:string,sources}))})
+});
 
 export const awakeInstructions = [
+  'Each new or revised observation has a fresh stable ID. Use relatesTo for prior versions; preserve their earlier uncertainty and never treat discarded or superseded observations as current understanding. Cite newly supplied evidence when revisiting them.',
+  'When context.memoryReview is present, return awake.evaluation and awake.orientation. This is mandatory reflection, not mandatory retention. Echo reviewId, scopeId and every covered source ID. Assess short, long, orientation, unfinished and contradictions. State a grounded reason for change, no_change or deferred. Every checkpoint yields an inspectable artifact: updated_understanding, provisional_observation, reviewed_discarded, or deferred. No new personal FACT, unchanged LONG/SHORT and no useful observation are different conclusions. For routine consultations, explain reviewed_discarded rather than inventing a user trait.',
+  'In that protocol awake.changes/candidates/contradictions/orientation are the sole semantic proposal path; leave all top-level compatibility candidates empty. A new user-established fictional activity can immediately establish TEMPORARY SHORT and active focus. Temporary fictional continuity is not durable canon or a real-world personal FACT. An explicit activity change revises the active focus without inferring permanent abandonment. A grounded promise to continue belongs in unfinished; resolve an existing commitment only with evidence. orientation.focus null preserves focus; unfinished add/resolve uses exact text and supplied sources. Preserve unrelated commitments.',
+  'Review observations and hypotheses across individually trivial turns, not just explicit declarations. Recurring letters or topics may support a provisional observed pattern; its purpose can remain unknown. Distinguish observation from hypothesis and established understanding. Prior observations are supplied as source-linked, provisional evidence. New evidence can reinforce, contradict or explain them: cite that evidence and relatesTo IDs without pretending you knew the explanation earlier. Discard or let observations decay when no longer useful. Be especially conservative about personal health, relationships and other sensitive topics; topic recurrence never establishes that the user has a condition, is travelling or is learning a language. Review observations are session-local artifacts, never automatic durable facts.',
   'context.memoryMode describes persistence authority, not a different identity. In temporary mode evaluate and evolve the same working LONG/SHORT/RECENT, attributed FACT/INSIGHT proposals and affect, but never claim saving or archival. In durable mode valid meaningful changes are eligible for verified current-state persistence. Explicit do-not-remember overrides both modes. No change is a valid result.',
   'You receive context.currentState: the complete current package for Everyday or the selected project, plus global identity and authorized general understanding. Evaluate each interaction, not just Sleep. Derive next SHORT from current SHORT and new RECENT, then consider next LONG against current LONG and that new SHORT. One call may propose both; no change is valid. Explicit corrections, decisions and meaningful unfinished business warrant a meaningful rebuild. Preserve compatible meanings and use REVISE for supersession, not an unrelated replacement. Changes apply only to the selected scope. Affective output continues the current package affect. Pending reflections are evidence for consideration, never orders. Do not claim persistence until verified.',
   'For current memory citations use the entry.source reference. Nested meaning.sources and retrieval pointers identify historical evidence; retrieve their contents before citing them as newly supplied evidence. Keep earlier meaning IDs for explicit REVISE targets, not as invented source citations.',
@@ -250,6 +262,7 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
       if(result.response&&!targets.includes(envelope.context.currentProjectId?'project':'global'))targets.push(envelope.context.currentProjectId?'project':'global');
       const pool = new Map([[envelope.user.source, envelope.user.text]]);
       for (const entry of [...envelope.memory.recent, ...envelope.memory.facts, ...(envelope.context.approvedReceipts ?? [])]) pool.set(entry.source, entry.text);
+      for(const entry of envelope.context.memoryReview?.evidence??[])pool.set(entry.source,entry.text);
       for (const track of [envelope.context.global, envelope.context.activeProject?.continuity]) if (track)
         for (const layer of layers) for (const entry of track[layer]) pool.set(entry.source, entry.text);
       const plans = [];
@@ -267,7 +280,8 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
         const oldReview = original.doc.memoryBridge?.review ?? { candidates: [], questions: [] };
         const merge = (old, next) => [...new Map([...old, ...next].map(item => [JSON.stringify([item.text,item.sources,item.layer]),item])).values()];
         const review = { candidates: merge(oldReview.candidates,candidate), questions: merge(oldReview.questions,questions) };
-        const refs = [...new Set([...changes, ...candidate, ...questions].flatMap(item => item.sources))];
+        const orientationEvidence=scope===(envelope.context.currentProjectId?'project':'global')&&receipt.orientationApplied?[receipt.orientationChanges?.focus,...(receipt.orientationChanges?.unfinished??[])].filter(Boolean):[];
+        const refs = [...new Set([...changes, ...candidate, ...questions,...orientationEvidence].flatMap(item => item.sources))];
         if (refs.some(ref => !pool.has(ref))) throw Error('Checkpoint evidence is not available; no source text will be reconstructed.');
         const mind=result.response?nextMind(original.doc.livingMind,after,review,result,projectId):undefined;
         plans.push({ scope, projectId, fileId: original.id, baseHash: await fingerprint(original.doc), revision: original.doc.memoryBridge?.revision ?? 0,
@@ -276,25 +290,29 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
       return validateCheckpoint({ version:1, operationId:result.turn.turnId, plans });
     },
     async prepareUnderstanding(results,context) {
-      if(!Array.isArray(results)||!results.length||results.length>12)throw Error('Keep the temporary preservation batch to twelve exchanges.');
+      if(!Array.isArray(results)||!results.length||results.length>512)throw Error('Session preservation evidence exceeded its bounded capacity.');
       const last=results.at(-1),projectId=last.envelope.context.currentProjectId??null;
       if(results.some(r=>(r.envelope.context.currentProjectId??null)!==projectId||r.receipt.outcome.status==='excluded'))throw Error('Temporary preservation cannot cross scopes or include excluded turns.');
       const scope=projectId?'project':'global',latest=new Map();
       for(const result of results)for(const item of result.receipt.applied)if(item.scope===scope)latest.set(item.layer,item);
       const receipt={...last.receipt,applied:[...latest.values()],candidates:results.flatMap(r=>r.receipt.candidates??[]).filter(r=>r.scope===scope),contradictions:results.flatMap(r=>r.receipt.contradictions??[]).filter(r=>r.scope===scope)};
-      const result={...last,receipt,envelope:{...last.envelope,memory:{...last.envelope.memory,recent:results.flatMap(r=>[r.turn.user,r.turn.aida])}}};
+      const current=context.currentState;
+      for(const layer of ['long','short','recent'])if(current[layer]?.length===1){const entry=current[layer][0];latest.set(layer,{scope,layer,operation:'EXPAND',source:entry.source,text:entry.text,meaning:entry.meaning,sources:[entry.source]});}
+      receipt.applied=[...latest.values()];
+      const result={...last,receipt,envelope:{...last.envelope,context,memory:{...last.envelope.memory,recent:results.flatMap(r=>[r.turn.user,r.turn.aida])}},turn:{...last.turn,turnId:context.commitOperationId??last.turn.turnId}};
       const checkpoint=await source.prepareCheckpoint(result);
       checkpoint.plans=checkpoint.plans.filter(p=>p.scope===scope);
       const state=context.currentState;
       if(state.scopeId!==(projectId?'project:'+projectId:'everyday'))throw Error('Current understanding belongs to another scope.');
       for(const plan of checkpoint.plans){
-        if((last.envelope.context.currentState.revision??0)!==plan.revision)throw Error('Committed memory changed during temporary conversation. Inspect and resolve before preserving it.');
+        if((context.currentState.revision??0)!==plan.revision)throw Error('Committed memory changed during temporary conversation. Inspect and resolve before preserving it.');
+        plan.review=structuredClone(state.review??plan.review);
         const {schema,identity,principles,revision,review,...fields}=state;
         const mind=Object.fromEntries(Object.keys(initialMind({},projectId)).map(k=>[k,fields[k]]));
         plan.mind=validateMind({...mind,conversation:[],checkout:plan.mind.checkout},projectId);
       }
       validateCheckpoint(checkpoint);
-      const sourceEvidence=new Map([...checkpoint.plans.flatMap(p=>p.evidence),...results.flatMap(r=>[r.turn.user,r.turn.aida])].map(e=>[e.source,e.text]));
+      const sourceEvidence=new Map([...checkpoint.plans.flatMap(p=>p.evidence),last.turn.user,last.turn.aida].map(e=>[e.source,e.text]));
       understandingAuthority.set(checkpoint,{version:1,id:crypto.randomUUID(),authority:'explicit-user-consent',at:new Date().toISOString(),sources:await Promise.all([...sourceEvidence].map(async([source,text])=>({source,sha256:await fingerprint(text)})))});
       return checkpoint;
     },
@@ -469,6 +487,7 @@ export function validateAwake(awake, envelope) {
   const exact = (value, fields) => value && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).length === fields.length && fields.every(field => Object.hasOwn(value, field));
   const known = new Set([envelope.user.source, ...envelope.context.references]);
+  for(const entry of [...(envelope.context.memoryReview?.evidence??[]),...(envelope.context.memoryReview?.priorObservations??[])])known.add(entry.source);
   for (const receipt of envelope.context.approvedReceipts ?? []) known.add(receipt.source);
   for (const entry of envelope.context.skillResult?.evidence?.entries ?? []) known.add(entry.source);
   for (const track of [envelope.memory, envelope.context.global, envelope.context.activeProject?.continuity, envelope.context.lookupProject?.continuity,envelope.context.currentState,envelope.context.globalState]) {
@@ -480,7 +499,8 @@ export function validateAwake(awake, envelope) {
   const reject = (diagnostic, message = "Invalid awake action or refresh request.") => {
     throw Object.assign(new Error(message), { diagnostic });
   };
-  if (!exact(awake, ["action", "rebuild", "changes", "candidates", "contradictions"])) reject("awake_shape");
+  const protocol=envelope.context.memoryReview;
+  if (!exact(awake, ["action", "rebuild", "changes", "candidates", "contradictions",...(protocol?['evaluation','orientation']:[])])) reject("awake_shape");
   if (!exact(action, ["kind", "target", "arguments", "sources", "uncertainty"])) reject("awake_action_shape");
   if (!kinds.includes(action.kind)) reject("awake_action_kind");
   if (action.target !== null && !bounded(action.target, 120)) reject("awake_action_target");
@@ -512,6 +532,35 @@ export function validateAwake(awake, envelope) {
   }
   if (new Set(awake.changes.map(item=>item.scope+':'+item.layer)).size !== awake.changes.length)
     reject('awake_duplicate_view','Return one current interpretation per scope and view.');
+  if(protocol){
+    const evaluation=awake.evaluation,orientation=awake.orientation;
+    if(!exact(evaluation,['version','reviewId','scopeId','decision','domain','outcome','reason','sources','assessed','coveredSources','observations'])||evaluation.version!==1||evaluation.reviewId!==protocol.id||evaluation.scopeId!==protocol.scopeId||!['everyday','fictional','consultation','uncertain'].includes(evaluation.domain)||
+      !['change','no_change','deferred'].includes(evaluation.decision)||!bounded(evaluation.reason,500)||!validSources(evaluation.sources,true)||
+      !Array.isArray(evaluation.assessed)||evaluation.assessed.length!==5||new Set(evaluation.assessed).size!==5||!['short','long','orientation','unfinished','contradictions'].every(k=>evaluation.assessed.includes(k))||
+      !Array.isArray(evaluation.coveredSources)||evaluation.coveredSources.length!==protocol.sources.length||new Set(evaluation.coveredSources).size!==evaluation.coveredSources.length||protocol.sources.some(s=>!evaluation.coveredSources.includes(s)))reject('memory_evaluation','A grounded, complete memory review artifact is required.');
+    if(!Array.isArray(evaluation.observations)||evaluation.observations.length>6)reject('memory_observations');
+    const observationIds=new Set((protocol.priorObservations??[]).map(o=>o.id));
+    for(const observation of evaluation.observations)if(!exact(observation,['id','kind','text','sources','relatesTo','disposition'])||!stableId(observation.id)||!['observation','hypothesis'].includes(observation.kind)||!bounded(observation.text,400)||!validSources(observation.sources,true)||!Array.isArray(observation.relatesTo)||observation.relatesTo.length>4||observation.relatesTo.some(id=>!observationIds.has(id))||!['carry','discard'].includes(observation.disposition))reject('memory_observation_sources','Invalid provisional observation or provenance.');
+    if(new Set(evaluation.observations.map(o=>o.id)).size!==evaluation.observations.length)reject('memory_observation_ids');
+    if(evaluation.observations.some(o=>observationIds.has(o.id)))reject('memory_observation_version','Use a fresh ID and relatesTo for a new observation version.');
+    if(!exact(orientation,['focus','unfinished'])||!(orientation.focus===null||exact(orientation.focus,['text','sources'])&&bounded(orientation.focus.text,400)&&validSources(orientation.focus.sources,true))||!Array.isArray(orientation.unfinished)||orientation.unfinished.length>6||orientation.unfinished.some(u=>!exact(u,['operation','text','sources'])||!['add','resolve'].includes(u.operation)||!bounded(u.text,400)||!validSources(u.sources,true)))reject('memory_orientation','Invalid source-grounded orientation.');
+    try{evolveOrientation(envelope.context.currentState.orientation,orientation);}catch(error){reject('memory_commitment',error.message);}
+    if(orientation.unfinished.some(u=>u.operation==='resolve'&&!u.sources.some(s=>protocol.sources.includes(s))))reject('memory_commitment_evidence','Resolving a commitment requires supplied conversation evidence.');
+    if(protocol.reviewOnly){
+      const cited=[...evaluation.sources,...awake.changes.flatMap(c=>c.sources),...awake.candidates.flatMap(c=>c.sources),...awake.contradictions.flatMap(c=>c.sources),...(orientation.focus?.sources??[]),...orientation.unfinished.flatMap(c=>c.sources),...evaluation.observations.flatMap(c=>c.sources)];
+      if(cited.includes(envelope.user.source))reject('memory_control_evidence','A review control instruction is not evidence of an experience or fact.');
+    }
+    const changed=awake.changes.some(c=>c.operation!=='KEEP')||awake.candidates.length||awake.contradictions.length||orientation.focus!==null||orientation.unfinished.length;
+    if((evaluation.decision==='change')!==!!changed||evaluation.decision==='deferred'&&changed)reject('memory_decision','Memory decision disagrees with its proposed changes.');
+    const expected=evaluation.decision==='change'?'updated_understanding':evaluation.decision==='deferred'?'deferred':evaluation.observations.some(o=>o.disposition==='carry')?'provisional_observation':'reviewed_discarded';
+    if(evaluation.outcome!==expected)reject('memory_outcome','Memory review outcome is inconsistent.');
+    if(evaluation.decision==='deferred'&&evaluation.observations.length)reject('memory_deferred');
+    if(evaluation.observations.some(o=>o.relatesTo.length&&!o.sources.includes(envelope.user.source)&&!o.sources.some(s=>protocol.sources.includes(s))))reject('memory_observation_revision','Revising observations requires newly supplied evidence.');
+    if(evaluation.outcome==='provisional_observation'&&awake.candidates.some(c=>c.scope==='global'&&c.layer==='facts'))reject('memory_observation_fact','A provisional observation is not an established personal fact.');
+    if(evaluation.domain!=='everyday'&&awake.candidates.some(c=>c.scope==='global'&&c.layer==='facts'))reject('memory_domain_fact','Fiction, consultations and uncertain hypotheses cannot establish personal facts.');
+    if([...awake.changes,...awake.candidates,...awake.contradictions].some(c=>!scopeAllowed(c,envelope)))reject('memory_scope','Semantic updates cannot cross the selected room scope.');
+    if(awake.changes.some(c=>!c.operation))reject('memory_operation','Semantic updates require explicit meaning operations.');
+  }
 }
 
 export function journalReceipt(result, supportingTurn) {
@@ -528,8 +577,8 @@ export function journalReceipt(result, supportingTurn) {
   if (!receipt.action.sources.every(ref => allowed.has(ref))) return undefined;
   const safe = Object.fromEntries(groups.map(group =>
     [group, receipt[group].filter(item => item.sources.every(ref => allowed.has(ref)))]));
-  const { preview, ...journalFields } = receipt;
-  return { ...journalFields, ...safe, ...(envelope.context.approvedReceipts?.length ? { approvedReceipts:envelope.context.approvedReceipts } : {}), contextReferences: envelope.context.references,
+  const { preview, evaluation, ...journalFields } = receipt;
+  return { ...journalFields, ...safe,...(evaluation?{reviewReceipt:{version:1,reviewId:evaluation.reviewId,decision:evaluation.decision,outcome:evaluation.outcome}}:{}), ...(envelope.context.approvedReceipts?.length ? { approvedReceipts:envelope.context.approvedReceipts } : {}), contextReferences: envelope.context.references,
     projectId: envelope.context.currentProjectId, userSource: envelope.user.source };
 }
 
@@ -545,9 +594,12 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
   let sizeAtRefresh = 0;
   let sourceRevision;
   const working = new Map();
+  const orientations=new Map();
   function decorate(context){
     const selected=context.lookupProject??context.activeProject;
-    return {...context,globalState:currentPackage(context.global),currentState:selected?currentPackage(selected.continuity,selected.id):currentPackage(context.global)};
+    const globalState=currentPackage(context.global),currentState=selected?currentPackage(selected.continuity,selected.id):currentPackage(context.global);
+    if(orientations.has(currentState.scopeId))currentState.orientation=structuredClone(orientations.get(currentState.scopeId));
+    return {...context,globalState,currentState};
   }
 
   function track(key, seed) {
@@ -584,8 +636,8 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
   return {
     get activeProjectId() { return activeId; },
-    discardWorking(){working.clear();refreshNext=true;},
-    workingContext(context){return decorate({...context,global:track('global',base.global),...(context.activeProject?{activeProject:{...context.activeProject,continuity:track('project:'+context.currentProjectId,project.continuity)}}:{})});},
+    discardWorking(){working.clear();orientations.clear();refreshNext=true;},
+    workingContext(context,{canonical=false}={}){return decorate({...context,global:track('global',canonical?base.global:context.global),...(context.activeProject?{activeProject:{...context.activeProject,continuity:track('project:'+context.currentProjectId,canonical?project.continuity:context.activeProject.continuity)}}:{})});},
     async enterScope(id){
       const current=await source.load();if(id&&!current.projects.some(p=>p.id===id))throw Error('Select a registered project.');
       activeId=id??null;project=undefined;refreshNext=true;
@@ -665,7 +717,20 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
       return result;
     },
 
-    async apply(envelope, awake, allowUpdates = true) {
+    async apply(envelope,awake,allowUpdates=true){
+      if(envelope.context.memoryReview&&awake.evaluation?.decision==='deferred'){
+        validateAwake(awake,envelope);return{action:awake.action,outcome:{status:'memory_review_deferred'},proposed:[],applied:[],candidates:[],contradictions:[],rejected:[],evaluation:awake.evaluation,semanticStatus:'deferred'};
+      }
+      const result=await this.applyCore(envelope,awake,allowUpdates);
+      if(!envelope.context.memoryReview)return result;
+      const permitted=allowUpdates&&!result.preview&&!envelope.context.lookupProject&&!envelope.context.projectEvidenceRead&&result.outcome.status!=='excluded';
+      const orientationApplied=!!(permitted&&(awake.orientation.focus||awake.orientation.unfinished.length));
+      const orientation=permitted?evolveOrientation(envelope.context.currentState.orientation,awake.orientation):envelope.context.currentState.orientation;
+      if(orientationApplied)orientations.set(envelope.context.currentState.scopeId,orientation);
+      return{...result,evaluation:structuredClone(awake.evaluation),orientation:structuredClone(orientation),orientationChanges:structuredClone(awake.orientation),orientationApplied,
+        semanticStatus:!permitted?'not_permitted':result.rejected?.length?'rejected':awake.evaluation.decision==='change'?'applied':awake.evaluation.outcome};
+    },
+    async applyCore(envelope, awake, allowUpdates = true) {
       validateAwake(awake, envelope);
       if(sessionId&&awake.changes.some(change=>!change.operation))throw Error('Living Mind changes require explicit operation and meaning evidence.');
       const { action } = awake;
@@ -720,10 +785,10 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
       }
 
-      const due = envelope.context.refresh.due || (awake.rebuild && awake.rebuild !== "threshold");
+      const due = envelope.context.memoryReview?true:envelope.context.refresh.due || (awake.rebuild && awake.rebuild !== "threshold");
       const applied = [];
       const rejected = [];
-      if (due && action.uncertainty === null) {
+      if (due && (envelope.context.memoryReview||action.uncertainty === null)) {
         for (const change of awake.changes) {
           if (!scopeAllowed(change,envelope)) { rejected.push({scope:change.scope,layer:change.layer,reason:'scope_transfer_denied'}); continue; }
           if (change.operation === 'KEEP') continue;

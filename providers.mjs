@@ -1,5 +1,5 @@
 import { parseConversationResponse, parseLibrarySuggestion } from "./conversation.mjs";
-import { awakeInstructions, awakeSchema } from "./awake-context.mjs";
+import { awakeInstructions, awakeSchema,semanticAwakeSchema } from "./awake-context.mjs";
 import { maxSleepBytes, parseSleepResponse, sleepInstructions, sleepSchema } from "./sleep-contract.mjs";
 
 export const openAIModel = "gpt-6-luna";
@@ -155,12 +155,12 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
       throw new ProviderError("The selected route or image cannot be used for inspection.");
     }
     if (envelope.visualEvidence?.status === "ready" && !image) throw new ProviderError("The active image is unavailable.");
-    const finalSchema = object({ ...schema.properties, awake: awakeSchema });
+    const finalSchema = object({ ...schema.properties,...(envelope.context?.memoryReview?{candidates:object(Object.fromEntries(['facts','insights','short','long'].map(k=>[k,{...candidate,maxItems:0}])))}:{}), awake: envelope.context?.memoryReview?semanticAwakeSchema:awakeSchema });
     const skills = envelope.context?.retrievalComplete ? [] :
       envelope.context?.capabilities.filter(skill => ["read", "preview"].includes(skill.phase)) ?? [];
     const format = envelope.context
       ? { name: "aida_conversation_v02_awake", instructions: `${instructions} ${awakeInstructions}`,
-        schema: finalSchema, tokens: 2000 }
+        schema: finalSchema, tokens: envelope.context.memoryReview?.triggers.some(t=>t!=='per_turn')?3000:2000 }
       : { name: "aida_conversation_v02", instructions, schema, tokens: maxOutputTokens };
     if (envelope.visualEvidence) {
       format.instructions += image

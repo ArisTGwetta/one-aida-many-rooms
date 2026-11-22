@@ -9,6 +9,7 @@ import { checkpointEligible, evolve, validateCheckpoint, validateOperation, safe
 import { projectSkills } from './project-skills.mjs';
 import { skillDescriptor } from './skill-registry.mjs';
 import {emptyMind,validateMind} from './living-mind.mjs';
+import {createProviders} from './providers.mjs';
 const folder='fixture-folder', conversationId='11111111-1111-4111-8111-111111111111';
 const blank=()=>({long:[],short:[],recent:[],facts:[],insights:[]});
 function fixture() {
@@ -59,13 +60,18 @@ function fixture() {
 }
 const unit=(id,text,source,kind='interpretation',replaces=null)=>({id,kind,text,sources:[source],replaces});
 const change=(e,scope,layer,text,operation,meaning)=>({scope,layer,text,operation,meaning,sources:[e.user.source],rationale:'A meaningful synthetic development.'});
+function semanticFields(e,proposed={}){
+  if(!e.context?.memoryReview)return proposed;
+  const orientation=proposed.orientation??{focus:null,unfinished:[]},changed=proposed.changes?.some(c=>c.operation!=='KEEP')||proposed.candidates?.length||proposed.contradictions?.length||orientation.focus||orientation.unfinished.length;
+  return{...proposed,orientation,evaluation:proposed.evaluation??{version:1,reviewId:e.context.memoryReview.id,scopeId:e.context.memoryReview.scopeId,decision:changed?'change':'no_change',domain:'everyday',outcome:changed?'updated_understanding':'reviewed_discarded',reason:changed?'The supplied synthetic evidence supports this working update.':'Reviewed the supplied evidence; no further useful interpretation is supported.',sources:[e.context.memoryReview.sources.at(-1)],assessed:['short','long','orientation','unfinished','contradictions'],coveredSources:e.context.memoryReview.sources,observations:[]}};
+}
 function chat(source, propose=()=>({}), bindings=[],options={}) {
   let calls=0,last; const steward=createAwakeSteward(source,{skills:projectSkills(source,bindings),sessionId:options.sessionId??null});
   const session=createConversationSession({steward,memoryStore:{recall:async()=>null},recoverConversation:options.recoverConversation??true,mode:options.mode??'legacy',stateStore:source,archiveTurns:options.archiveTurns,provider:async e=>{
-    calls++;last=e;const proposed=propose(e);
+    calls++;last=e;const proposed=e.context?.memoryReview?.reviewOnly?(options.reviewPropose?.(e)??{}):propose(e);
     if(proposed.skillRequest)return JSON.stringify(proposed);
     return JSON.stringify({version:'0.2',reply:'Synthetic conversational reply.',intent:'conversation',route:'reply',affect:e.affect,
-      candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...proposed}});
+      candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...semanticFields(e,proposed)}});
   }});
   return {session,steward,get calls(){return calls;},get last(){return last;}};
 }
@@ -78,6 +84,24 @@ async function stage(client,result,choice='auto') {
   return {checkpoint,event:makeJournalEvent(conversationId,turn,disposition==='provisional'?'provisional':'candidate')};
 }
 async function commit(client,pending){const saved=await client.journal.save(pending);return client.source.commitCheckpoint(pending.checkpoint,'drive:'+saved.fileId);}
+
+async function ordinaryChat(f,propose,{mode='temporary',mutateResponse}={}){
+  const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8'),client=f.open(),requests=[],exchanges=[],nodes=new Map();let completed;
+  const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,hidden:false,textContent:'',handlers:{},addEventListener(name,action){this.handlers[name]=action;},dispatchEvent(){},setAttribute(){}});return nodes.get(id);};
+  const sandbox={byId:get,conversationId,conversationMode:mode,providerCalls:[],selection:{provider:'openai',model:'gpt-6-luna'},pending:undefined,preceding:undefined,sources:[],disposition:'ephemeral',support:get('journal-support'),retention:get('retention'),message:get('message'),send:get('send'),transcript:get('transcript'),details:get('conversation-details'),journalStatus:get('journal-status'),chatStatus:get('chat-status'),projectData:get('project-preview-data'),projectStatus:get('project-save-status'),projectPanel:get('project-preview'),palace:{conversationEvidence:()=>undefined},glasses:{snapshot:()=>undefined},chatt:{offer(){}},localDevelopment:false,select:{value:'openai'},appendExchange:t=>exchanges.push(t),showBudget(){},showJournalContext(){},clearProjectPreview(){},prepareSelection:async()=>({provider:'openai',model:'gpt-6-luna'}),run:(_label,action)=>{completed=Promise.resolve().then(action);return completed;},CustomEvent:class{},Date,JSON,Error,dispositionFor,availableSupport:()=>undefined,visualReceipt:()=>undefined,checkpointEligible,journalReceipt,makeJournalEvent,contextSource:client.source,journal:client.journal};
+  const invoke=createProviders({apiKey:'synthetic-key',fetchRequest:async(url,options)=>{
+    assert.equal(url,'https://api.openai.com/v1/responses');const body=JSON.parse(options.body),e=JSON.parse(body.input);requests.push(body);const proposed=propose(e);
+    const reply={version:'0.2',reply:'Synthetic ordinary Chat reply.',intent:'conversation',route:'reply',affect:e.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...semanticFields(e,proposed)}};
+    return Response.json({status:'completed',model:'gpt-6-luna',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({result:mutateResponse?mutateResponse(reply,e):reply})}]}],usage:{input_tokens:10,output_tokens:10}});
+  }});
+  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat'}),stateStore:client.source,mode,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage});return r.raw;}});
+  const inspect=app.slice(app.indexOf('  function refreshMindInspector(){'),app.indexOf('  function mindTrace('));
+  const trace=app.slice(app.indexOf('  function mindTrace('),app.indexOf('  function mindContext('));
+  const save=app.slice(app.indexOf('  async function savePending() {'),app.indexOf('\n  byId("journal-resume")'));
+  const handler=app.slice(app.indexOf('  byId("chat-form").addEventListener("submit"'),app.indexOf('\n  return async () => {'));
+  runInNewContext(`let mindEvidence={};${inspect}${trace}${save}${handler}`,sandbox);
+  return{client,session:sandbox.session,requests,exchanges,get,async send(text){get('message').value=text;get('chat-form').handlers.submit({preventDefault(){}});return completed;}};
+}
 test('normal awake updates checkpoint one current global LONG/SHORT/RECENT and survive outside the journal recovery window',async()=>{
   const f=fixture(),client=f.open();const c=chat(client.source,e=>e.user.text==='We approved the new plan.'?{rebuild:'meaningful_event',changes:['long','short','recent'].map(layer=>change(e,'global',layer,layer+' current plan','EXPAND',[unit(layer+'-plan','A synthetic approved plan.',e.user.source)]))}:{});
   const result=await c.session.send('We approved the new plan.');assert.equal(c.calls,1);
@@ -211,7 +235,7 @@ test('the actual chat persistence handler retains pending work and verifies retr
   const status={textContent:''},journalStatus={textContent:''};
   const harness=runInNewContext(`let pending=initial;${app.slice(start,end)};({savePending,get pending(){return pending;}})`,{
     initial:{result,turn:{...result.turn,conversationId},disposition:'candidate'},contextSource:client.source,journal:client.journal,
-    journalReceipt,makeJournalEvent,conversationId,journalStatus,byId:id=>id==='context-status'?status:{textContent:''},mindTrace:()=>{},Date,JSON,Error
+    journalReceipt,makeJournalEvent,conversationId,journalStatus,session:c.session,byId:id=>id==='context-status'?status:{textContent:''},mindTrace:()=>{},Date,JSON,Error
   });
   let fail=true;f.fail((_record,phase)=>{if(phase==='context-before'&&fail){fail=false;return true;}return false;});
   await assert.rejects(harness.savePending());assert.ok(harness.pending.journalVerified);
@@ -372,7 +396,7 @@ test('temporary Sleep preservation commits understanding only through the real c
   const preserved=await c.session.endSession('understanding');assert.equal(preserved.verified.status,'verified');assert.equal(c.session.memoryStatus.mode,'temporary');
   assert.equal(f.writes.filter(w=>w.kind==='journal').length,0);
   const doc=f.files.get('global').record;assert.equal(doc.memoryBridge.journalReference,null);assert.equal(doc.memoryBridge.stateReceipt.authority,'explicit-user-consent');assert.deepEqual(doc.livingMind.conversation,[]);assert.equal(doc.livingMind.checkout,null);
-  assert.ok(!JSON.stringify(doc).includes('RAW_PRIVATE_SLEEP_CONVERSATION'));assert.equal(doc.memoryBridge.stateReceipt.sources.length,2);
+  assert.ok(!JSON.stringify(doc).includes('RAW_PRIVATE_SLEEP_CONVERSATION'));assert.equal(doc.memoryBridge.stateReceipt.sources.length,4);
   const fresh=chat(f.open().source,()=>({}),[],{mode:'temporary',sessionId:'later',recoverConversation:false});await fresh.session.send('What is our goal?');assert.equal(fresh.last.context.currentState.short[0].text,'A synthetic durable goal.');assert.equal(fresh.last.context.currentState.long[0].text,'A synthetic durable goal.');assert.deepEqual(fresh.last.memory.recent,[]);assert.ok(!JSON.stringify(fresh.last).includes('RAW_PRIVATE_SLEEP_CONVERSATION'));
   const fake={version:1,operationId:'forged',plans:[]};await assert.rejects(client.source.commitUnderstanding(fake),/explicitly approved/);
 });
@@ -393,7 +417,7 @@ test('understanding-only failures preserve local work and retry without another 
   await c.session.send('A temporary plan to preserve.');let fails=true;
   f.fail((doc,phase)=>doc.memoryBridge&&phase==='context-after'&&fails&&(fails=false,true));
   await assert.rejects(c.session.setMode('durable','understanding'));assert.equal(c.session.memoryStatus.mode,'temporary');assert.equal(c.session.memoryStatus.meaningfulChanges,true);
-  f.fail(null);const saved=await c.session.setMode('durable','understanding');assert.equal(saved.verified.status,'verified');assert.equal(c.calls,1);assert.equal(f.files.get('global').record.memoryBridge.revision,1);
+  const afterReviewCalls=c.calls;f.fail(null);const saved=await c.session.setMode('durable','understanding');assert.equal(saved.verified.status,'verified');assert.equal(c.calls,afterReviewCalls);assert.equal(f.files.get('global').record.memoryBridge.revision,1);
 });
 
 test('a temporary stale writer cannot preserve over a newer committed understanding',async()=>{
@@ -444,7 +468,7 @@ test('temporary corrections preserve unrelated meanings when explicitly saved an
   const old=await c.session.send('RAW_OLD_CODE');corrected=true;await c.session.send('RAW_NEW_CODE');await c.session.endSession('understanding');
   const doc=f.files.get('global').record;assert.deepEqual(doc.short[0].meaning.map(u=>u.id),['goal','code-two']);assert.ok(!JSON.stringify(doc).includes('RAW_OLD_CODE'));assert.ok(!JSON.stringify(doc).includes('RAW_NEW_CODE'));
   const coldClient=f.open(),steward=createAwakeSteward(coldClient.source,{skills:projectSkills(coldClient.source),sessionId:'cold'});let sent;
-  const fresh=createConversationSession({steward,stateStore:coldClient.source,mode:'temporary',recoverConversation:false,recoveredTurns:[old.turn],memoryStore:{recall:async()=>null},provider:async envelope=>{sent=envelope;return JSON.stringify({version:'0.2',reply:'The current plan.',intent:'conversation',route:'reply',affect:envelope.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[]}});}});
+  const fresh=createConversationSession({steward,stateStore:coldClient.source,mode:'temporary',recoverConversation:false,recoveredTurns:[old.turn],memoryStore:{recall:async()=>null},provider:async envelope=>{sent=envelope;return JSON.stringify({version:'0.2',reply:'The current plan.',intent:'conversation',route:'reply',affect:envelope.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...semanticFields(envelope)}});}});
   await fresh.send('What is our current plan?');assert.deepEqual(sent.memory.recent,[]);assert.equal(sent.context.currentState.short[0].text,'The goal remains; code two replaces code one.');assert.ok(!JSON.stringify(sent).includes('RAW_OLD_CODE'));
 });
 
@@ -463,4 +487,126 @@ test('cancelling the ordinary Sleep handoff prevents reflective provider calls a
     setupSleepPanel({store:{},journal:{async sleepEvidence(){accesses++;throw Error('Must not read.');}},provider(){accesses++;throw Error('Must not call.');},beforeRun:async()=>false,run:(_label,action)=>action()});
     assert.match(await byId('sleep-run').handlers.click(),/Sleep cancelled/);assert.equal(accesses,0);
   }finally{if(original===undefined)delete globalThis.document;else globalThis.document=original;}
+});
+
+test('ordinary Chat Send immediately evolves fictional SHORT, grounded commitments and focus; a consultation can be reviewed and discarded',async()=>{
+  const f=fixture();
+  const ui=await ordinaryChat(f,e=>{
+    if(e.context.memoryReview.reviewOnly)return{};
+    const text=e.user.text,scope='global',base={};
+    if(text.startsWith('Adventure:'))Object.assign(base,{changes:[change(e,scope,'short','Fictional activity: take the Ring toward Rivendell while Gandalf is missing.','EXPAND',[unit('ring-goal','Fictional mission: destroy the Ring.',e.user.source),unit('active-focus','Proceed to Rivendell for help.',e.user.source)])],orientation:{focus:{text:'Fictional adventure toward Rivendell.',sources:[e.user.source]},unfinished:[]}});
+    if(text.startsWith('Promise:'))base.orientation={focus:null,unfinished:[{operation:'add',text:'Continue the fictional adventure tomorrow.',sources:[e.user.source]}]};
+    if(text.startsWith('Switch:'))Object.assign(base,{changes:[change(e,scope,'short','Current fictional activity: Moon bakery; a dragon pays with seashells. The earlier adventure is not declared permanently abandoned.','REVISE',[unit('earlier-goal','An earlier fictional Ring mission; no permanent abandonment established.',e.user.source,'interpretation','ring-goal'),unit('bakery-focus','Run a fictional Moon bakery with a dragon customer.',e.user.source,'interpretation','active-focus')])],orientation:{focus:{text:'Fictional Moon bakery.',sources:[e.user.source]},unfinished:[]}});
+    const fields=semanticFields(e,base);fields.evaluation.domain=text.startsWith('How')?'consultation':'fictional';return fields;
+  });
+  await ui.send('Adventure: take the Ring toward Rivendell; Gandalf has disappeared.');
+  assert.equal(ui.session.memoryStatus.current.short.length,1);assert.equal(ui.session.memoryStatus.current.meaningRevision,1);
+  await ui.send('Promise: we will continue this adventure tomorrow.');assert.deepEqual(ui.session.memoryStatus.current.orientation.unfinished,['Continue the fictional adventure tomorrow.']);
+  await ui.send('Switch: open a bakery on the Moon; a dragon pays in seashells.');
+  let state=ui.session.memoryStatus;assert.equal(state.current.orientation.focus[0],'Fictional Moon bakery.');assert.equal(state.current.orientation.unfinished.length,1);assert.match(state.current.short[0].text,/not declared permanently abandoned/);assert.equal(state.current.facts.length,0);
+  const meaningRevision=state.current.meaningRevision;await ui.send('How do you spell rhythm?');state=ui.session.memoryStatus;
+  assert.equal(state.current.meaningRevision,meaningRevision);assert.equal(state.review.last.outcome,'reviewed_discarded');assert.match(state.review.last.reason,/Reviewed/);assert.equal(ui.exchanges.length,4);assert.equal(ui.requests.length,4);assert.equal(f.writes.length,0);
+  const inspector=JSON.parse(ui.get('mind-inspector-state').textContent);assert.equal(inspector.lastMemoryEvaluation.outcome,'reviewed_discarded');assert.equal(inspector.mode,'temporary');assert.equal(inspector.orientation.unfinished.length,1);assert.equal(inspector.diagnostics.turnSequence,4);
+  assert.ok(JSON.parse(ui.requests[3].input).context.memoryReview.triggers.includes('before_compaction'));
+  assert.match(ui.requests[0].instructions,/mandatory reflection, not mandatory retention/);assert.equal(ui.requests[0].text.format.schema.properties.result.anyOf[0].properties.awake.required.includes('evaluation'),true);
+});
+
+test('deferred pre-compaction review preserves the exact packet and ordinary Chat reply for retry before Sleep or discard',async()=>{
+  const f=fixture();let defer=true;const c=chat(f.open().source,e=>{
+    if(!e.context.memoryReview.triggers.includes('before_compaction'))return{};
+    if(defer){const fields=semanticFields(e);fields.evaluation={...fields.evaluation,decision:'deferred',outcome:'deferred',reason:'The meaning cannot yet be reviewed safely.'};return fields;}return{};
+  },[],{mode:'temporary',reviewPropose:e=>{if(defer){const fields=semanticFields(e);fields.evaluation={...fields.evaluation,decision:'deferred',outcome:'deferred',reason:'Review remains deferred.'};return fields;}return{};}});
+  for(let n=0;n<4;n++)await c.session.send('Synthetic developing turn '+n);
+  const failedPacket=c.last.context.memoryReview.sources;assert.equal(c.session.memoryStatus.diagnostics.recentMessages,8);assert.equal(c.session.memoryStatus.review.last.status,'deferred');assert.ok(failedPacket.every(ref=>c.session.memoryStatus.review.pendingSources.includes(ref)));
+  await assert.rejects(c.session.endSession(),e=>e.diagnostic==='memory_review_deferred');assert.equal(c.session.memoryStatus.diagnostics.recentMessages,8);assert.ok(failedPacket.every(ref=>c.session.memoryStatus.review.pendingSources.includes(ref)));
+  defer=false;await c.session.review('retry');assert.ok(failedPacket.every(ref=>c.last.context.memoryReview.sources.includes(ref)));assert.equal(c.session.memoryStatus.review.unreviewedSources,0);assert.equal(c.session.memoryStatus.review.last.outcome,'reviewed_discarded');assert.equal(f.writes.length,0);
+});
+
+test('a failed ordinary provider review preserves evidence and does not regenerate the conversational turn on explicit review retry',async()=>{
+  const f=fixture();let failed=true;
+  const c=chat(f.open().source,e=>{if(failed)throw Error('Synthetic provider outage.');return{};},[],{mode:'temporary'});
+  await assert.rejects(c.session.send('A meaningful pending user message.'));
+  const source=c.session.memoryStatus.review.pendingSources[0];assert.ok(source);assert.equal(c.session.memoryStatus.diagnostics.turnSequence,0);
+  failed=false;await c.session.review('retry');assert.ok(c.last.context.memoryReview.sources.includes(source));assert.equal(c.session.memoryStatus.review.unreviewedSources,0);assert.equal(c.session.memoryStatus.diagnostics.turnSequence,0);assert.equal(f.writes.length,0);
+});
+
+test('checkpoint reviews recurring letters as an observation, and a later explanation revises provenance without hindsight',async()=>{
+  const f=fixture();const c=chat(f.open().source,e=>{
+    const fields=semanticFields(e),packet=e.context.memoryReview;
+    if(packet.triggers.includes('interval_20')){
+      fields.evaluation={...fields.evaluation,domain:'uncertain',outcome:'provisional_observation',reason:'The evidence shows a sequence of letters; its purpose is unknown.',observations:[{id:'letters',kind:'observation',text:'Successive alphabet letters were sent; the purpose is unknown.',sources:[packet.evidence[0].source,e.user.source],relatesTo:[],disposition:'carry'}]};
+    }else if(e.user.text.includes('imaginary niece')){
+      fields.evaluation={...fields.evaluation,outcome:'provisional_observation',reason:'A new user explanation contextualizes the earlier observation.',observations:[{id:'explanation',kind:'observation',text:'The user later explained that an imaginary niece had borrowed the phone. That explanation was not known during the letter sequence.',sources:[e.user.source,packet.priorObservations.find(o=>o.id==='letters').source],relatesTo:['letters'],disposition:'carry'}]};
+    }return fields;
+  },[],{mode:'temporary'});
+  for(let n=0;n<20;n++)await c.session.send(String.fromCharCode(65+n));
+  const packet=c.last.context.memoryReview;assert.ok(packet.triggers.includes('interval_20'));assert.equal(packet.evidence.filter(e=>e.role==='user').length,20);assert.equal(c.session.memoryStatus.review.last.outcome,'provisional_observation');assert.equal(c.session.memoryStatus.current.short.length,0);assert.equal(c.session.memoryStatus.current.facts.length,0);
+  await c.session.send('My imaginary niece borrowed the phone.');const history=c.session.memoryStatus.review.observations;
+  assert.equal(history.find(o=>o.id==='letters').status,'superseded');assert.equal(history.find(o=>o.id==='explanation').relatesTo[0],'letters');assert.match(history.find(o=>o.id==='explanation').text,/not known/);assert.equal(f.writes.length,0);
+});
+
+test('twenty routine spelling consultations produce accountable discard receipts rather than a personal trait',async()=>{
+  const f=fixture(),c=chat(f.open().source,e=>{const fields=semanticFields(e);fields.evaluation.domain='consultation';fields.evaluation.reason='Reviewed routine spelling consultations. No personal preference, trait or useful continuing observation is supported.';return fields;},[],{mode:'temporary'});
+  for(let n=0;n<20;n++)await c.session.send('How do you spell syntheticword'+n+'?');
+  assert.ok(c.last.context.memoryReview.triggers.includes('interval_20'));const state=c.session.memoryStatus;assert.equal(state.review.last.outcome,'reviewed_discarded');assert.equal(state.review.last.observations.length,0);assert.deepEqual(state.current.short,[]);assert.deepEqual(state.current.facts,[]);assert.equal(f.writes.length,0);
+});
+
+test('recurring sensitive topics support tentative connections only, never personal health or travel facts',async()=>{
+  const f=fixture(),c=chat(f.open().source,e=>{
+    const fields=semanticFields(e);fields.evaluation.domain='consultation';
+    if(e.context.memoryReview.triggers.includes('before_compaction'))fields.evaluation={...fields.evaluation,outcome:'provisional_observation',reason:'Topics recur, but no personal circumstances or purpose were stated.',observations:[{id:'topics',kind:'observation',text:'French spelling, Paris and a medical topic recur in these questions.',sources:[e.context.memoryReview.sources[0],e.user.source],relatesTo:[],disposition:'carry'},{id:'connection',kind:'hypothesis',text:'The topics might be related; the connection and the user circumstances are unknown.',sources:[e.context.memoryReview.sources[0],e.user.source],relatesTo:[],disposition:'carry'}]};return fields;
+  },[],{mode:'temporary'});
+  for(const text of ['French spelling question.','A question about Paris.','A general question about a medical condition.','Another French spelling question.'])await c.session.send(text);
+  const state=c.session.memoryStatus;assert.equal(state.review.observations.find(o=>o.id==='connection').kind,'hypothesis');assert.deepEqual(state.current.facts,[]);assert.deepEqual(state.current.short,[]);assert.equal(f.writes.length,0);
+});
+
+test('ordinary Chat durable path verifies a real adapter checkpoint in synthetic Drive and cold recovery excludes original RECENT',async()=>{
+  const f=fixture(),ui=await ordinaryChat(f,e=>e.context.memoryReview.reviewOnly?{}:{changes:[change(e,'global','short','A durable synthetic plan.','EXPAND',[unit('plan','A durable synthetic plan.',e.user.source)])]},{mode:'durable'});
+  await ui.send('Please keep our synthetic plan for tomorrow.');assert.equal(f.files.get('global').record.short[0].text,'A durable synthetic plan.');assert.match(ui.get('journal-status').textContent,/Saved and verified/);assert.equal(ui.session.memoryStatus.current.revision,1);assert.ok(!JSON.stringify(f.files.get('global').record).includes('reviewed_discarded'));
+  await ui.session.handoff();const cold=chat(f.open().source,()=>({}),[],{mode:'temporary',recoverConversation:false,sessionId:'fresh'});await cold.session.send('What is our plan?');assert.equal(cold.last.context.currentState.short[0].text,'A durable synthetic plan.');assert.deepEqual(cold.last.memory.recent,[]);assert.ok(!JSON.stringify(cold.last).includes('Please keep our synthetic plan for tomorrow.'));assert.notEqual(cold.session.memoryStatus.diagnostics.sessionId,ui.session.memoryStatus.diagnostics.sessionId);
+});
+
+test('Sleep must reflect on unreviewed evidence even if ordinary turns previously proposed no change',async()=>{
+  const f=fixture(),c=chat(f.open().source,()=>({}),[],{mode:'temporary',reviewPropose:e=>({changes:[change({...e,user:e.context.memoryReview.evidence[0]},'global','short','Fictional next step identified during Sleep review.','EXPAND',[unit('sleep-step','A fictional next step.',e.context.memoryReview.evidence[0].source)])],orientation:{focus:null,unfinished:[{operation:'add',text:'Continue this fictional activity tomorrow.',sources:[e.context.memoryReview.evidence[0].source]}]}})});
+  await c.session.send('A synthetic fictional activity with a next step.');assert.deepEqual(c.session.memoryStatus.current.short,[]);
+  const ended=await c.session.endSession();assert.equal(ended.needsDecision,true);assert.equal(c.session.memoryStatus.current.short.length,1);assert.equal(c.session.memoryStatus.review.last.outcome,'updated_understanding');assert.ok(c.last.context.memoryReview.triggers.includes('sleep'));
+  const calls=c.calls;await c.session.endSession('discard');assert.equal(c.calls,calls);assert.equal(f.writes.length,0);
+});
+
+test('review-only durable changes use the existing conditional writer and retry a lost save without repeating model calls',async()=>{
+  const f=fixture(),client=f.open(),c=chat(client.source,()=>({}),[],{mode:'durable',sessionId:'review-writer',reviewPropose:e=>({changes:[change({...e,user:e.context.memoryReview.evidence[0]},'global','short','A reviewed durable synthetic goal.','EXPAND',[unit('review-goal','Reviewed goal.',e.context.memoryReview.evidence[0].source)])]})});
+  await c.session.send('A durable conversation with a synthetic goal.');await c.session.review('sleep');assert.ok(c.session.memoryStatus.review.pendingCommit);
+  const calls=c.calls;let failed=true;f.fail((doc,phase)=>doc.memoryBridge&&phase==='context-after'&&failed&&(failed=false,true));
+  await assert.rejects(c.session.commitReview());assert.ok(c.session.memoryStatus.review.pendingCommit);await assert.rejects(c.session.send('Another turn.'),/Verify the pending/);
+  f.fail(null);assert.equal((await c.session.review('retry')).reused,true);const saved=await c.session.commitReview();assert.equal(saved.status,'verified');assert.equal(c.calls,calls);assert.equal(f.files.get('global').record.memoryBridge.revision,1);assert.equal(c.session.memoryStatus.review.pendingCommit,null);
+  const raw=JSON.stringify([...f.files.values()]);assert.ok(!raw.includes('reviewed_discarded'));assert.equal(f.writes.filter(w=>w.kind==='journal').length,0);
+});
+
+test('ordinary Chat rejects unjustified no-change, fabricated citations, wrong coverage, competing proposal paths and fictional personal facts',async()=>{
+  const mutations=[
+    [reply=>{delete reply.awake.evaluation;},'awake_shape'],
+    [reply=>{reply.awake.evaluation.reason='';},'memory_evaluation'],
+    [reply=>{reply.awake.evaluation.coveredSources=[];},'memory_evaluation'],
+    [reply=>{reply.awake.evaluation.sources=['invented:source'];},'memory_evaluation'],
+    [(reply,e)=>{reply.candidates.short=[{text:'A second proposal route.',sources:[e.user.source],supersedes:null}];},'memory_legacy_candidates'],
+    [(reply,e)=>{reply.awake.orientation.unfinished=[{operation:'resolve',text:'An invented commitment.',sources:[e.user.source]}];reply.awake.evaluation.decision='change';reply.awake.evaluation.outcome='updated_understanding';},'memory_commitment'],
+    [(reply,e)=>{reply.awake.evaluation.domain='fictional';reply.awake.evaluation.decision='change';reply.awake.evaluation.outcome='updated_understanding';reply.awake.candidates=[{scope:'global',layer:'facts',text:'An unsupported real-world personal fact.',sources:[e.user.source],rationale:'Invented from fiction.'}];},'memory_domain_fact']
+  ];
+  for(const [mutate,diagnostic] of mutations){
+    const f=fixture(),ui=await ordinaryChat(f,()=>({}),{mutateResponse:(reply,e)=>{mutate(reply,e);return reply;}});
+    await assert.rejects(ui.send('A synthetic meaningful message.'),e=>e.diagnostic===diagnostic,diagnostic);assert.deepEqual(ui.session.memoryStatus.current.short,[]);assert.ok(ui.session.memoryStatus.review.pendingSources.length);assert.equal(f.writes.length,0);
+  }
+});
+
+test('the advertised semantic schema agrees with the runtime path and contains no unsupported maxLength constraints',async()=>{
+  const ui=await ordinaryChat(fixture(),()=>({}));await ui.send('An ordinary synthetic consultation.');
+  const schema=ui.requests[0].text.format.schema,final=schema.properties.result.anyOf[0];assert.equal(final.properties.candidates.properties.short.maxItems,0);assert.ok(final.properties.awake.required.includes('evaluation'));assert.ok(final.properties.awake.required.includes('orientation'));
+  const visit=value=>{if(!value||typeof value!=='object')return;assert.equal(Object.hasOwn(value,'maxLength'),false);if(value.type==='object'){assert.equal(value.additionalProperties,false);assert.deepEqual([...value.required].sort(),Object.keys(value.properties).sort());}for(const child of Object.values(value))if(typeof child==='object')visit(child);};visit(schema);
+});
+
+test('fresh sessions and other rooms do not inherit temporary interpretations or provisional review artifacts',async()=>{
+  const f=fixture(),client=f.open(),c=chat(client.source,e=>{const fields=semanticFields(e);fields.evaluation={...fields.evaluation,outcome:'provisional_observation',reason:'A source-grounded but tentative observation.',observations:[{id:'private-observation',kind:'hypothesis',text:'PRIVATE_SYNTHETIC_ROOM_OBSERVATION: purpose uncertain.',sources:[e.user.source],relatesTo:[],disposition:'carry'}]};return fields;},[],{mode:'temporary'});
+  await c.session.enterScope('atlas');await c.session.send('A synthetic project activity.');assert.equal(c.session.memoryStatus.review.observations.length,1);
+  const cold=chat(f.open().source,()=>({}),[],{mode:'temporary'});await cold.session.send('Everyday conversation.');assert.ok(!JSON.stringify(cold.last).includes('PRIVATE_SYNTHETIC_ROOM_OBSERVATION'));assert.equal(cold.session.memoryStatus.review.observations.length,0);assert.equal(cold.session.memoryStatus.diagnostics.turnSequence,1);
+  await c.session.endSession('discard');await c.session.enterScope(null);await c.session.send('A new everyday activity.');assert.ok(!JSON.stringify(c.last).includes('PRIVATE_SYNTHETIC_ROOM_OBSERVATION'));assert.equal(f.writes.length,0);
 });

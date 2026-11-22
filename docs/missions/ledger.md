@@ -35,6 +35,16 @@ and live behavioral acceptance are different states.
 
 ## Current deployment and verification boundary
 
+Mission 008 mandatory-review repair (November 22): one authoritative semantic
+proposal path, grounded per-turn evaluation, independent unfinished orientation,
+twenty-turn/Sleep/pre-compaction review artifacts, session-local provisional
+observations and accountable discard, failure-safe retry, and visible reset/scope
+diagnostics. [Implementation and acceptance](mission-008-mandatory-review.md).
+180/180 offline tests; ordinary Chat handler/provider/parser/steward/persistence
+exercised with synthetic responses. No new paid calls or real Drive writes.
+CURRENT remains `c1c6fb5`; update only CANDIDATE in place. Live semantics,
+OpenAI compatibility and real persistence remain acceptance gates.
+
 Mission 008 recovery (November 22): `252f4b1` rejected as application baseline.
 CURRENT remains the explicitly designated `c1c6fb5`; CANDIDATE is rebuilt around
 that everyday application with the same scoped engine, explicit temporary/durable
@@ -63,7 +73,8 @@ graph; whitespace check clean. No paid calls, live Drive writes or publication.
   deployments. The redundant `/preview/252f4b1/` redirects to CANDIDATE.
 - Use only these two active slots; no new numbered previews. See the
   [standing deployment policy](../deployment-policy.md).
-- Tests remain 156/156; no provider calls or Drive writes authorized by slot cleanup.
+- The two-slot registration had 156/156 tests; the latest repair has 180/180.
+  Publication does not authorize provider calls or Drive writes.
 - Source pushes/default-development-branch changes do not authorize a Pages source switch.
 - Next memory implementation must satisfy real cold-start and correction gates, not merely component tests.
 

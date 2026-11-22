@@ -69,6 +69,13 @@
             <button id="mode-durable" type="button" aria-pressed="false" disabled>Remember with me · durable</button>
           </div>
           <p id="memory-mode-status" role="status">Just chatting: working understanding stays in this session.</p>
+          <details id="mind-inspector">
+            <summary>Living Mind — working state</summary>
+            <p id="mind-inspector-status" role="status">No conversation evaluation yet.</p>
+            <pre id="mind-inspector-state"></pre>
+            <button id="mind-review" type="button" disabled>Review pending evidence / retry</button>
+            <p>Reviews may use the selected provider. Calls and costs appear in Development evidence. Temporary reviews and provisional observations remain session-local.</p>
+          </details>
           <input id="retention" type="hidden" value="auto">
         </fieldset>
         <label id="support-label" hidden><input type="checkbox" id="journal-support"> Include the preceding eligible exchange as supporting context</label>

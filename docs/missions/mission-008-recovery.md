@@ -4,6 +4,11 @@ November 22, 2026. One canonical home, existing `aida-v1` branch and history.
 CURRENT is the user-designated `c1c6fb5` everyday baseline, with known limitations.
 The rejected `252f4b1` candidate is not accepted by passing automated tests.
 
+The subsequent [mandatory-review repair](mission-008-mandatory-review.md)
+supersedes this checkpoint's optional evaluation, derived unfinished orientation,
+twelve-exchange cap and unreviewed Sleep/compaction behavior. Earlier 168-test
+results remain historical evidence, not acceptance of the repaired Living Mind.
+
 ## Application retained
 
 The recovery keeps `c1c6fb5`'s portrait assets, emotion/visual components, mobile
