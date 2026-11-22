@@ -60,14 +60,14 @@ Each retired linked worktree was clean with no untracked or ignored files, its e
 | `One-Aida-Many-Rooms-Welcome` | `welcome-library-v1` | `26c643d28ccc6830cc00e9393dd13ba7e9560854` |
 | `One-Aida-Many-Rooms-Welcome-Checkpoint` | `docs/welcome-library-checkpoint` | `5b70d174152f27962b625887fc27453ab8239533` |
 
-`One-Aida-Many-Rooms-Pages-7827a28` was successfully unregistered and all application files removed. Windows still holds its now-empty directory open, so that empty directory shell is retained. No process or user application was closed to remove it. It contains no checkout or alternate application.
+`One-Aida-Many-Rooms-Pages-7827a28` was successfully unregistered and all application files removed. Windows initially held its empty directory open; the exact empty directory was removed at final closeout after the lock released. No process or user application was closed. No publishing-directory residue remains.
 
 ## Additional retired copies
 
 - `C:/Users/arist/OneDrive/Documents/GitHub/one-aida-many-rooms`: clean independent desktop clone at `71a08ee`; no ignored/untracked material, and all referenced/reflog commits verified present in canonical Git before exact-directory removal.
 - `C:/Users/arist/Documents/Codex/One-Aida-Many-Rooms`: clean original linked orphan checkout at `a5ab3f8`; its file tree matched the independent public seed `ef3f85e`. Unlinked through Git. Donor main checkout and original branch/history remain intact in their existing donor repository; private original author history was not imported/pushed to the public new repository.
 
-Total: 41 redundant checkout registrations/copies retired, with one empty Windows-locked directory shell retained.
+Total: 41 redundant checkout registrations/copies retired. No empty publishing-directory residue remains.
 
 ## Retained, classified materials
 
