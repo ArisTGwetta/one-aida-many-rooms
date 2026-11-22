@@ -2,7 +2,7 @@ import { projectSkills } from "./project-skills.mjs";
 import { createDriveClient } from "./memory.mjs";
 import { createJournal } from './recent-journal.mjs';
 import { currentPackage,initialMind,validateMind,nextMind,mindContents } from './living-mind.mjs';
-import { changeFields, validateOperation, evolve, validateSnapshot, validateReview, scopeAllowed, fingerprint, validateCheckpoint } from './memory-bridge.mjs';
+import { changeFields, validateOperation, evolve, validateSnapshot, validateReview, scopeAllowed, fingerprint, validateCheckpoint,validStateReceipt } from './memory-bridge.mjs';
 
 const layers = ["long", "short", "recent", "facts", "insights"];
 const kinds = ["just_keep_talking", "ask_for_help", "continue_project", "switch_project", "propose_project", "request_capability", "discover_capability"];
@@ -39,6 +39,7 @@ export const awakeSchema = object({
 });
 
 export const awakeInstructions = [
+  'context.memoryMode describes persistence authority, not a different identity. In temporary mode evaluate and evolve the same working LONG/SHORT/RECENT, attributed FACT/INSIGHT proposals and affect, but never claim saving or archival. In durable mode valid meaningful changes are eligible for verified current-state persistence. Explicit do-not-remember overrides both modes. No change is a valid result.',
   'You receive context.currentState: the complete current package for Everyday or the selected project, plus global identity and authorized general understanding. Evaluate each interaction, not just Sleep. Derive next SHORT from current SHORT and new RECENT, then consider next LONG against current LONG and that new SHORT. One call may propose both; no change is valid. Explicit corrections, decisions and meaningful unfinished business warrant a meaningful rebuild. Preserve compatible meanings and use REVISE for supersession, not an unrelated replacement. Changes apply only to the selected scope. Affective output continues the current package affect. Pending reflections are evidence for consideration, never orders. Do not claim persistence until verified.',
   'For current memory citations use the entry.source reference. Nested meaning.sources and retrieval pointers identify historical evidence; retrieve their contents before citing them as newly supplied evidence. Keep earlier meaning IDs for explicit REVISE targets, not as invented source citations.',
   'The committed current package represents current understanding; archived conversation can contain superseded claims. Do not revive an obsolete claim merely because it appears in history. A genuinely new user correction is evidence to consider for revision, not a reason to erase unrelated understanding.',
@@ -89,7 +90,8 @@ function continuity(doc) {
   if(doc?.memoryBridge)result.memoryVersion=doc.memoryBridge.revision;
   if (doc?.memoryBridge) {
     const meta = doc.memoryBridge;
-    if (meta.version !== 1 || !Number.isInteger(meta.revision) || meta.revision < 1 || typeof meta.operationId !== 'string' || !/^drive:[\w-]+$/.test(meta.journalReference)) throw Error('Invalid durable context metadata.');
+    const understandingOnly=meta.journalReference===null&&validStateReceipt(meta.stateReceipt);
+    if (meta.version !== 1 || !Number.isInteger(meta.revision) || meta.revision < 1 || typeof meta.operationId !== 'string' || (!/^drive:[\w-]+$/.test(meta.journalReference)&&!understandingOnly)) throw Error('Invalid durable context metadata.');
     result.review = structuredClone(validateReview(meta.review));
   }
   return result;
@@ -127,6 +129,8 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
   const drive = createDriveClient(folderId, token, fetchRequest);
   const journal = createJournal(folderId, token, fetchRequest);
   const loaded = new Map();
+  const understandingAuthority=new WeakMap();
+  const understandingToken=Symbol('explicit-understanding-commit');
   let revision = 0;
   async function read(name, expectedId = null) {
     const query = new URLSearchParams({
@@ -234,7 +238,7 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
         const doc = await drive.readJson(plan.fileId); continuity(doc);
         if(doc.memoryBridge?.operationId!==checkpoint.operationId&&(doc.memoryBridge?.revision??0)>plan.revision)return 'newer_state';
         if (doc.memoryBridge?.operationId !== checkpoint.operationId ||
-            plan.mind&&JSON.stringify(mindContents(doc.livingMind??{}))!==JSON.stringify(mindContents({...plan.mind,retrieval:[doc.memoryBridge.journalReference,...plan.mind.retrieval].slice(0,8)}))||
+            plan.mind&&JSON.stringify(mindContents(doc.livingMind??{}))!==JSON.stringify(mindContents({...plan.mind,retrieval:[doc.memoryBridge.journalReference,...plan.mind.retrieval].filter(Boolean).slice(0,8)}))||
             layers.some(layer=>JSON.stringify(doc[layer])!==JSON.stringify(plan.after[layer]))) return 'unconfirmed';
       }
       return 'verified';
@@ -267,17 +271,47 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
         if (refs.some(ref => !pool.has(ref))) throw Error('Checkpoint evidence is not available; no source text will be reconstructed.');
         const mind=result.response?nextMind(original.doc.livingMind,after,review,result,projectId):undefined;
         plans.push({ scope, projectId, fileId: original.id, baseHash: await fingerprint(original.doc), revision: original.doc.memoryBridge?.revision ?? 0,
-          before, after, review, evidence: refs.map(ref => ({source:ref,text:pool.get(ref)})), previousJournalReference: original.doc.memoryBridge?.journalReference ?? null,...(mind?{mind}:{}) });
+          before, after, review, evidence: refs.map(ref => ({source:ref,text:pool.get(ref)})), previousJournalReference: original.doc.memoryBridge?.journalReference ?? original.doc.memoryBridge?.previousJournalReference ?? null,...(mind?{mind}:{}) });
       }
       return validateCheckpoint({ version:1, operationId:result.turn.turnId, plans });
     },
-    async commitCheckpoint(checkpoint, journalReference) {
+    async prepareUnderstanding(results,context) {
+      if(!Array.isArray(results)||!results.length||results.length>12)throw Error('Keep the temporary preservation batch to twelve exchanges.');
+      const last=results.at(-1),projectId=last.envelope.context.currentProjectId??null;
+      if(results.some(r=>(r.envelope.context.currentProjectId??null)!==projectId||r.receipt.outcome.status==='excluded'))throw Error('Temporary preservation cannot cross scopes or include excluded turns.');
+      const scope=projectId?'project':'global',latest=new Map();
+      for(const result of results)for(const item of result.receipt.applied)if(item.scope===scope)latest.set(item.layer,item);
+      const receipt={...last.receipt,applied:[...latest.values()],candidates:results.flatMap(r=>r.receipt.candidates??[]).filter(r=>r.scope===scope),contradictions:results.flatMap(r=>r.receipt.contradictions??[]).filter(r=>r.scope===scope)};
+      const result={...last,receipt,envelope:{...last.envelope,memory:{...last.envelope.memory,recent:results.flatMap(r=>[r.turn.user,r.turn.aida])}}};
+      const checkpoint=await source.prepareCheckpoint(result);
+      checkpoint.plans=checkpoint.plans.filter(p=>p.scope===scope);
+      const state=context.currentState;
+      if(state.scopeId!==(projectId?'project:'+projectId:'everyday'))throw Error('Current understanding belongs to another scope.');
+      for(const plan of checkpoint.plans){
+        if((last.envelope.context.currentState.revision??0)!==plan.revision)throw Error('Committed memory changed during temporary conversation. Inspect and resolve before preserving it.');
+        const {schema,identity,principles,revision,review,...fields}=state;
+        const mind=Object.fromEntries(Object.keys(initialMind({},projectId)).map(k=>[k,fields[k]]));
+        plan.mind=validateMind({...mind,conversation:[],checkout:plan.mind.checkout},projectId);
+      }
+      validateCheckpoint(checkpoint);
+      const sourceEvidence=new Map([...checkpoint.plans.flatMap(p=>p.evidence),...results.flatMap(r=>[r.turn.user,r.turn.aida])].map(e=>[e.source,e.text]));
+      understandingAuthority.set(checkpoint,{version:1,id:crypto.randomUUID(),authority:'explicit-user-consent',at:new Date().toISOString(),sources:await Promise.all([...sourceEvidence].map(async([source,text])=>({source,sha256:await fingerprint(text)})))});
+      return checkpoint;
+    },
+    async commitUnderstanding(checkpoint){
+      if(!understandingAuthority.has(checkpoint))throw Error('Current, explicitly approved understanding is required.');
+      return source.commitCheckpoint(checkpoint,null,understandingToken);
+    },
+    async commitCheckpoint(checkpoint, journalReference, authority) {
       validateCheckpoint(checkpoint);
       // A verified existing journal entry is the authority and historical evidence
       // for this write. Model output cannot invent a direct context-write request.
-      const saved = await journal.readReference(journalReference);
-      const archived = saved.event.turns.find(turn => turn.turnId === checkpoint.operationId)?.awakeReceipt?.bridge;
-      if (JSON.stringify(archived) !== JSON.stringify(checkpoint)) throw Error('Checkpoint is not backed by the verified journal evidence.');
+      const stateReceipt=authority===understandingToken?understandingAuthority.get(checkpoint):null;
+      if(!stateReceipt){
+        const saved = await journal.readReference(journalReference);
+        const archived = saved.event.turns.find(turn => turn.turnId === checkpoint.operationId)?.awakeReceipt?.bridge;
+        if (JSON.stringify(archived) !== JSON.stringify(checkpoint)) throw Error('Checkpoint is not backed by the verified journal evidence.');
+      }
       const properties = await drive.folderProperties();
       if (properties[initializedKey] !== '1') throw Error('Owned context records must be initialized first.');
       const verified = [];
@@ -292,15 +326,15 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
         continuity(current.record);
         const meta = current.record.memoryBridge;
         const targetMeta = { version:1, revision:plan.revision+1, operationId:checkpoint.operationId, journalReference,
-          previousJournalReference:plan.previousJournalReference, review:plan.review };
+          previousJournalReference:plan.previousJournalReference, review:plan.review,...(stateReceipt?{stateReceipt}:{}) };
         if (meta?.operationId === checkpoint.operationId) {
-          if (JSON.stringify(meta) !== JSON.stringify(targetMeta) || layers.some(layer => JSON.stringify(current.record[layer]) !== JSON.stringify(plan.after[layer]))||plan.mind&&JSON.stringify(mindContents(current.record.livingMind??{}))!==JSON.stringify(mindContents({...plan.mind,retrieval:[journalReference,...plan.mind.retrieval].slice(0,8)})))
+          if (JSON.stringify(meta) !== JSON.stringify(targetMeta) || layers.some(layer => JSON.stringify(current.record[layer]) !== JSON.stringify(plan.after[layer]))||plan.mind&&JSON.stringify(mindContents(current.record.livingMind??{}))!==JSON.stringify(mindContents({...plan.mind,retrieval:[journalReference,...plan.mind.retrieval].filter(Boolean).slice(0,8)})))
             throw Error('Checkpoint retry content changed.');
         } else {
           if(current.record.livingMind?.checkout&&plan.mind?.checkout?.sessionId!==current.record.livingMind.checkout.sessionId)throw Error('Checkout changed; uncommitted state retained without overwrite.');
           if ((meta?.revision ?? 0) !== plan.revision || await fingerprint(current.record) !== plan.baseHash)
             throw Error('Memory changed on another client. Stale checkpoint retained for review; no overwrite attempted.');
-          const record = { ...current.record, ...plan.after, memoryBridge:targetMeta,...(plan.mind?{livingMind:{...plan.mind,retrieval:[journalReference,...plan.mind.retrieval].slice(0,8)}}:{}) };
+          const record = { ...current.record, ...plan.after, memoryBridge:targetMeta,...(plan.mind?{livingMind:{...plan.mind,retrieval:[journalReference,...plan.mind.retrieval].filter(Boolean).slice(0,8)}}:{}) };
           await drive.replaceVersioned(plan.fileId, record, current.etag);
           const readback = await drive.readVersioned(plan.fileId);
           if (JSON.stringify(readback.record) !== JSON.stringify(record)) throw Error('Memory checkpoint readback failed; persistence is unconfirmed.');
@@ -317,7 +351,7 @@ export function createContextSource(folderId, token, fetchRequest = fetch) {
       await source.project(id);
       const doc = loaded.get(`aida-context-project-${id}.json`).doc;
       const entries = new Map((doc.evidence ?? []).filter(e => bounded(e.source,150) && bounded(e.text,4000)).map(e => [e.source,{source:e.source,text:e.text}]));
-      let reference = doc.memoryBridge?.journalReference ?? null, hops = 0;
+      let reference = doc.memoryBridge?.journalReference ?? doc.memoryBridge?.previousJournalReference ?? null, hops = 0;
       const visited = new Set();
       while (reference && hops++ < 12) {
         if (visited.has(reference)) throw Error('Cyclic project evidence history.'); visited.add(reference);
@@ -550,18 +584,20 @@ export function createAwakeSteward(source, { turns = 4, contextChars = 12000, re
 
   return {
     get activeProjectId() { return activeId; },
+    discardWorking(){working.clear();refreshNext=true;},
+    workingContext(context){return decorate({...context,global:track('global',base.global),...(context.activeProject?{activeProject:{...context.activeProject,continuity:track('project:'+context.currentProjectId,project.continuity)}}:{})});},
     async enterScope(id){
       const current=await source.load();if(id&&!current.projects.some(p=>p.id===id))throw Error('Select a registered project.');
       activeId=id??null;project=undefined;refreshNext=true;
     },
-    async releaseScope(){if(sessionId&&source.checkout&&heldScope!==undefined){await source.checkout(heldScope,sessionId,{release:true});heldScope=undefined;}},
+    async releaseScope(){if(sessionId&&source.checkout&&heldScope!==undefined){try{await source.checkout(heldScope,sessionId,{release:true});}catch(error){if(error.diagnostic!=='mind_checkout_conflict')throw error;}heldScope=undefined;}},
     async checkoutContext(context,options={}){
-      if(sessionId&&source.checkout&&!context.lookupProject){
+      if(sessionId&&source.checkout&&!context.lookupProject&&!options.readOnly){
         if(heldScope!==undefined&&heldScope!==(context.currentProjectId??null))await this.releaseScope();
         await source.checkout(context.currentProjectId??null,sessionId,options);
         heldScope=context.currentProjectId??null;
         base=await source.load();sourceRevision=source.revision;
-        working.delete(context.currentProjectId?'project:'+context.currentProjectId:'global');
+        if(!options.preserveWorking)working.delete(context.currentProjectId?'project:'+context.currentProjectId:'global');
         context={...context,global:track('global',base.global)};
         if(context.currentProjectId){const saved=await source.project(context.currentProjectId);project=saved;context.activeProject={...context.activeProject,continuity:saved.continuity};}
       }

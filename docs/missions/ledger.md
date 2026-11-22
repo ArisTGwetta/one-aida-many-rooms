@@ -35,6 +35,14 @@ and live behavioral acceptance are different states.
 
 ## Current deployment and verification boundary
 
+Mission 008 recovery (November 22): `252f4b1` rejected as application baseline.
+CURRENT remains the explicitly designated `c1c6fb5`; CANDIDATE is rebuilt around
+that everyday application with the same scoped engine, explicit temporary/durable
+modes and understanding-only Sleep preservation. [Recovery record](mission-008-recovery.md).
+168/168 synthetic regressions; unsigned local browser/portrait check passed.
+Live model/Drive/cold-start/correction/privacy gates remain unverified. No paid
+calls or Drive writes performed. Runtime source is `/candidate/deployment.json`.
+
 Mission 008 — Living Mind (November 22): same current-state engine integrated into
 ordinary chat for Everyday and project scopes, with affect/orientation/reflections,
 checkout/handoff, source-safe scoped conversation and state-evolution evidence.
@@ -50,7 +58,7 @@ graph; whitespace check clean. No paid calls, live Drive writes or publication.
   `c1c6fb59191d9c40f2e77eb15233cba6da54593a`, explicitly user-designated everyday
   baseline with known limitations; preserve until explicit candidate acceptance.
 - CANDIDATE: https://aristgwetta.github.io/one-aida-many-rooms/candidate/ —
-  `252f4b18ec5f379c570f14d7ffe631daa34e26b9`, Mission 008 awaiting live acceptance.
+  Mission 008 recovery awaiting live acceptance; exact source in deployment.json.
 - Root and older accepted preview entry points remain historical compatibility
   deployments. The redundant `/preview/252f4b1/` redirects to CANDIDATE.
 - Use only these two active slots; no new numbered previews. See the

@@ -1,10 +1,38 @@
 # Aida memory contract v1
 
-**Version 1.1.0 — authoritative architectural requirements.**
+**Version 1.2.0 — authoritative architectural requirements.**
 Original reconciliation: November 21, 2026. Living Mind refinement: November 22.
 This is not a declaration that the implementation satisfies every requirement.
 Envelope `0.2`, context `schema_version: 1` and Theater schemas are separate
 implementation versions. This documentation changes none of them.
+
+## Recovery clarification: one engine, two permission modes
+
+Everyday Aida and every project use the same Living Mind state schema and
+meaning-update lifecycle. Global identity/personality and skills are shared;
+private room understanding, affect, orientation and reflections remain scoped.
+
+JUST CHATTING loads authorized memory and evolves a session-only working package.
+Neither raw temporary exchanges nor their interpretations are automatically written
+to durable context or archival services. Explicit opt-out still prevents retention.
+REMEMBER WITH ME evaluates each turn for meaningful changes or no change; valid
+eligible updates use verified persistence without routine human review. A proposal,
+accepted working update, journal receipt and readback-verified commit are distinct.
+
+Before temporary conversation becomes durable, the user explicitly chooses current
+understanding, original exchanges, both, or neither. Saving understanding alone
+must not archive the raw conversation, including through a later turn's context.
+Durable-to-temporary stops future persistence; it does not erase committed memory.
+
+Sleep/session end compares temporary understanding with committed understanding.
+Meaningful differences invite saving understanding only or letting it go; no
+meaningful difference requires no approval interruption. Durable handoff verifies
+pending writes or clearly reports failure. Inspect/Resume is read-only; takeover
+is explicit and cannot recover another browser's unsaved work. No silent overwrite.
+
+These permissions do not authorize a new memory service, a full archival pipeline,
+automatic cross-room transfer, or automatic promotion to canonical beliefs. The
+independent reflective rhythms and all original requirements below remain binding.
 
 ## Authority and provenance
 

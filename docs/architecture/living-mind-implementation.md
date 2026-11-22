@@ -3,6 +3,15 @@
 Mission 008, November 22, 2026. Canonical home and branch remain unchanged.
 This records implementation, not a claim of real browser/Drive acceptance.
 
+**Recovery supersedes the original candidate's mode/handoff behavior below.**
+`252f4b1` was rejected as an application baseline. The integrated everyday recovery
+retains `c1c6fb5`'s body/capabilities and now defaults to read-only JUST CHATTING,
+with explicit REMEMBER WITH ME and preservation choices. See the authoritative
+[recovery checkpoint](../missions/mission-008-recovery.md) for current behavior,
+understanding-only persistence, tests and unresolved live gates. This document's
+original publication procedure is historical: use only `/candidate/`, never a
+new numbered preview. CURRENT remains `c1c6fb5`.
+
 ## One engine, existing records
 
 `living-mind.mjs` is a pure projection/validation helper, not another store.

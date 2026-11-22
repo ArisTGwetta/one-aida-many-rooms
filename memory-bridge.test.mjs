@@ -61,7 +61,7 @@ const unit=(id,text,source,kind='interpretation',replaces=null)=>({id,kind,text,
 const change=(e,scope,layer,text,operation,meaning)=>({scope,layer,text,operation,meaning,sources:[e.user.source],rationale:'A meaningful synthetic development.'});
 function chat(source, propose=()=>({}), bindings=[],options={}) {
   let calls=0,last; const steward=createAwakeSteward(source,{skills:projectSkills(source,bindings),sessionId:options.sessionId??null});
-  const session=createConversationSession({steward,memoryStore:{recall:async()=>null},recoverConversation:options.recoverConversation??true,provider:async e=>{
+  const session=createConversationSession({steward,memoryStore:{recall:async()=>null},recoverConversation:options.recoverConversation??true,mode:options.mode??'legacy',stateStore:source,archiveTurns:options.archiveTurns,provider:async e=>{
     calls++;last=e;const proposed=propose(e);
     if(proposed.skillRequest)return JSON.stringify(proposed);
     return JSON.stringify({version:'0.2',reply:'Synthetic conversational reply.',intent:'conversation',route:'reply',affect:e.affect,
@@ -351,4 +351,116 @@ test('a quick question under a real checkout changes no personal state, despite 
   assert.equal(checkpointEligible(result,'ephemeral'),false);
   const doc=f.files.get('global').record;assert.deepEqual(doc.short,[]);assert.equal(doc.livingMind.meaningRevision,0);assert.deepEqual(doc.livingMind.conversation,[]);
   assert.equal(f.writes.filter(w=>w.kind==='journal').length,0);assert.equal(doc.livingMind.lastInteractionAt,null);
+});
+
+test('JUST CHATTING uses the same evolving working package without checkout, journal, or context writes; Sleep discard is private',async()=>{
+  const f=fixture(),client=f.open();let n=0;
+  const c=chat(client.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','A session-local evolving plan.','EXPAND',[unit('temporary-'+(++n),'A synthetic plan step '+n,e.user.source)])],candidates:[{scope:'global',layer:'insights',text:'A tentative session-local insight.',sources:[e.user.source],rationale:'Synthetic evidence.'}]}),[],{sessionId:'temporary-device',mode:'temporary'});
+  await c.session.checkout();const before=JSON.stringify([...f.files]);
+  await c.session.send('RAW_TEMPORARY_EXCHANGE_ONE');await c.session.send('RAW_TEMPORARY_EXCHANGE_TWO');
+  assert.equal(c.last.context.memoryMode,'temporary');assert.equal(c.last.context.currentState.short[0].text,'A session-local evolving plan.');assert.equal(c.last.context.currentState.review.candidates.length,1);
+  assert.equal(c.session.memoryStatus.meaningfulChanges,true);assert.equal(c.session.memoryStatus.current.meaningRevision,2);assert.equal(f.writes.length,0);
+  assert.equal((await c.session.endSession()).needsDecision,true);assert.equal(f.writes.length,0);
+  await c.session.endSession('discard');assert.equal(JSON.stringify([...f.files]),before);assert.equal(c.session.memoryStatus.meaningfulChanges,false);
+  const cold=chat(f.open().source,()=>({}),[],{sessionId:'cold',mode:'temporary'});await cold.session.send('Continue.');assert.deepEqual(cold.last.context.currentState.short,[]);assert.ok(!JSON.stringify(cold.last).includes('RAW_TEMPORARY'));
+});
+
+test('temporary Sleep preservation commits understanding only through the real conditional writer; fresh recovery excludes raw conversation',async()=>{
+  const f=fixture(),client=f.open();const c=chat(client.source,e=>({rebuild:'meaningful_event',changes:['short','long'].map(layer=>change(e,'global',layer,'A synthetic durable goal.','EXPAND',[unit('goal-'+layer,'A synthetic durable goal.',e.user.source)]))}),[],{mode:'temporary',sessionId:'sleep-device'});
+  await c.session.send('RAW_PRIVATE_SLEEP_CONVERSATION');assert.equal(f.writes.length,0);
+  assert.equal((await c.session.setMode('durable')).needsChoice,true);assert.equal(f.writes.length,0);
+  const preserved=await c.session.endSession('understanding');assert.equal(preserved.verified.status,'verified');assert.equal(c.session.memoryStatus.mode,'temporary');
+  assert.equal(f.writes.filter(w=>w.kind==='journal').length,0);
+  const doc=f.files.get('global').record;assert.equal(doc.memoryBridge.journalReference,null);assert.equal(doc.memoryBridge.stateReceipt.authority,'explicit-user-consent');assert.deepEqual(doc.livingMind.conversation,[]);assert.equal(doc.livingMind.checkout,null);
+  assert.ok(!JSON.stringify(doc).includes('RAW_PRIVATE_SLEEP_CONVERSATION'));assert.equal(doc.memoryBridge.stateReceipt.sources.length,2);
+  const fresh=chat(f.open().source,()=>({}),[],{mode:'temporary',sessionId:'later',recoverConversation:false});await fresh.session.send('What is our goal?');assert.equal(fresh.last.context.currentState.short[0].text,'A synthetic durable goal.');assert.equal(fresh.last.context.currentState.long[0].text,'A synthetic durable goal.');assert.deepEqual(fresh.last.memory.recent,[]);assert.ok(!JSON.stringify(fresh.last).includes('RAW_PRIVATE_SLEEP_CONVERSATION'));
+  const fake={version:1,operationId:'forged',plans:[]};await assert.rejects(client.source.commitUnderstanding(fake),/explicitly approved/);
+});
+
+test('temporary-to-durable choices separately authorize raw exchanges, understanding, both, or neither',async()=>{
+  for(const choice of ['exchanges','understanding','both','neither']){
+    const f=fixture(),client=f.open();const archive=async results=>{for(const r of results)await client.journal.save({event:makeJournalEvent(conversationId,{...r.turn,conversationId},'candidate')});};
+    const c=chat(client.source,e=>e.user.text==='RAW_SELECTED_TEMPORARY_PORTION'?({rebuild:'meaningful_event',changes:[change(e,'global','short','A synthetic selected understanding.','EXPAND',[unit('selected','Selected understanding.',e.user.source)])]}):{},[],{mode:'temporary',sessionId:'chooser',archiveTurns:archive});
+    await c.session.send('RAW_SELECTED_TEMPORARY_PORTION');await c.session.setMode('durable',choice);
+    const doc=f.files.get('global').record;assert.equal(doc.short.length,['understanding','both'].includes(choice)?1:0);
+    assert.equal(f.writes.filter(w=>w.kind==='journal').length,['exchanges','both'].includes(choice)?1:0);
+    await c.session.send('A new durable conversation.');assert.ok(!JSON.stringify(c.last).includes('RAW_SELECTED_TEMPORARY_PORTION'));
+  }
+});
+
+test('understanding-only failures preserve local work and retry without another model call or duplicate revision',async()=>{
+  const f=fixture(),client=f.open(),c=chat(client.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','Retry the synthetic plan.','EXPAND',[unit('retry','Retry plan.',e.user.source)])]}),[],{mode:'temporary',sessionId:'retry-device'});
+  await c.session.send('A temporary plan to preserve.');let fails=true;
+  f.fail((doc,phase)=>doc.memoryBridge&&phase==='context-after'&&fails&&(fails=false,true));
+  await assert.rejects(c.session.setMode('durable','understanding'));assert.equal(c.session.memoryStatus.mode,'temporary');assert.equal(c.session.memoryStatus.meaningfulChanges,true);
+  f.fail(null);const saved=await c.session.setMode('durable','understanding');assert.equal(saved.verified.status,'verified');assert.equal(c.calls,1);assert.equal(f.files.get('global').record.memoryBridge.revision,1);
+});
+
+test('a temporary stale writer cannot preserve over a newer committed understanding',async()=>{
+  const f=fixture(),left=f.open(),right=f.open();
+  const a=chat(left.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','A stale temporary plan.','EXPAND',[unit('stale','Stale plan.',e.user.source)])]}),[],{mode:'temporary',sessionId:'left'});
+  await a.session.send('First temporary plan.');
+  const b=chat(right.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','The newer committed plan.','EXPAND',[unit('newest','Newest plan.',e.user.source)])]}),[],{sessionId:'right'});
+  const result=await b.session.send('Newer durable plan.');await commit(right,await stage(right,result));await b.session.handoff();
+  await assert.rejects(a.session.setMode('durable','understanding'),/changed during temporary conversation/);
+  assert.equal(f.files.get('global').record.short[0].text,'The newer committed plan.');assert.equal(a.session.memoryStatus.meaningfulChanges,true);
+});
+
+test('the same temporary-to-durable engine recovers a private project without RECENT and keeps Everyday and a second project clean',async()=>{
+  const f=fixture(),client=f.open(),c=chat(client.source,e=>({rebuild:'meaningful_event',changes:[change(e,'project','short','A private synthetic project goal.','EXPAND',[unit('private','A private synthetic project goal.',e.user.source)])]}),[],{mode:'temporary',sessionId:'project-device'});
+  await c.session.enterScope('atlas');await c.session.send('RAW_PRIVATE_PROJECT_PORTION');await assert.rejects(c.session.enterScope(null),/Resolve or discard/);
+  await c.session.setMode('durable','understanding');await c.session.handoff();
+  const cold=chat(f.open().source,()=>({}),[],{mode:'temporary',sessionId:'project-later',recoverConversation:false});await cold.session.enterScope('atlas');await cold.session.send('Resume this project.');
+  assert.equal(cold.last.context.currentState.short[0].text,'A private synthetic project goal.');assert.deepEqual(cold.last.memory.recent,[]);assert.ok(!JSON.stringify(cold.last).includes('RAW_PRIVATE_PROJECT_PORTION'));
+  await cold.session.discardTemporary();await cold.session.enterScope(null);await cold.session.send('Everyday conversation.');assert.ok(!JSON.stringify(cold.last).includes('private synthetic project goal'));
+  await cold.session.discardTemporary();await cold.session.enterScope('beta');await cold.session.send('Different project.');assert.ok(!JSON.stringify(cold.last).includes('private synthetic project goal'));
+});
+
+test('a no-change temporary Sleep needs no approval and writes nothing; quick questions stay private',async()=>{
+  const f=fixture(),c=chat(f.open().source,()=>({}),[],{mode:'temporary',sessionId:'incidental'});
+  await c.session.send('How do you spell rhythm?');assert.equal(c.session.memoryStatus.meaningfulChanges,false);const ended=await c.session.endSession();assert.equal(ended.ended,true);assert.equal(ended.needsDecision,undefined);assert.equal(f.writes.length,0);
+});
+
+test('failed durable-mode acquisition keeps the temporary privacy label and pending working state; inspection is read-only',async()=>{
+  const f=fixture(),a=chat(f.open().source,()=>({}),[],{sessionId:'owner'});await a.session.checkout();
+  const b=chat(f.open().source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','An unsaved temporary idea.','EXPAND',[unit('idea','An unsaved temporary idea.',e.user.source)])]}),[],{mode:'temporary',sessionId:'visitor'});
+  await b.session.send('A temporary idea.');const count=f.writes.length;
+  const inspected=await b.session.inspect();assert.equal(inspected.inspectionOnly,true);assert.deepEqual(inspected.currentState.short,[]);assert.equal(f.writes.length,count);
+  await assert.rejects(b.session.setMode('durable','understanding'),e=>e.diagnostic==='mind_checkout_conflict');assert.equal(b.session.memoryStatus.mode,'temporary');assert.equal(b.session.memoryStatus.meaningfulChanges,true);assert.equal(f.writes.length,count);
+  await b.session.endSession('discard');assert.equal(f.writes.length,count);
+});
+
+test('switching durable to temporary stops future writes without erasing committed understanding; durable Sleep releases ownership',async()=>{
+  const f=fixture(),client=f.open();let n=0;
+  const c=chat(client.source,e=>({rebuild:'meaningful_event',changes:[change(e,'global','short','Goal step '+(++n),'EXPAND',[unit('step-'+n,'Synthetic goal step '+n,e.user.source)])]}),[],{mode:'durable',sessionId:'durable'});
+  const first=await c.session.send('First durable goal.');await commit(client,await stage(client,first));await c.session.endSession();assert.equal(f.files.get('global').record.livingMind.checkout,null);
+  await c.session.setMode('temporary');const count=f.writes.length,previous=structuredClone(f.files.get('global').record);
+  await c.session.send('Second temporary goal.');assert.equal(c.session.memoryStatus.current.short[0].text,'Goal step 2');await c.session.endSession('discard');assert.equal(f.writes.length,count);assert.deepEqual(f.files.get('global').record,previous);
+});
+
+test('temporary corrections preserve unrelated meanings when explicitly saved and recovered without supplied journal turns',async()=>{
+  const f=fixture(),client=f.open();let corrected=false;
+  const c=chat(client.source,e=>({rebuild:corrected?'correction':'meaningful_event',changes:[change(e,'global','short',corrected?'The goal remains; code two replaces code one.':'The goal and code one.',corrected?'REVISE':'EXPAND',corrected?[unit('code-two','Synthetic new code.',e.user.source,'claim','code-one')]:[unit('goal','Preserve the synthetic goal.',e.user.source),unit('code-one','Synthetic old code.',e.user.source,'claim')])]}),[],{mode:'temporary',sessionId:'correction'});
+  const old=await c.session.send('RAW_OLD_CODE');corrected=true;await c.session.send('RAW_NEW_CODE');await c.session.endSession('understanding');
+  const doc=f.files.get('global').record;assert.deepEqual(doc.short[0].meaning.map(u=>u.id),['goal','code-two']);assert.ok(!JSON.stringify(doc).includes('RAW_OLD_CODE'));assert.ok(!JSON.stringify(doc).includes('RAW_NEW_CODE'));
+  const coldClient=f.open(),steward=createAwakeSteward(coldClient.source,{skills:projectSkills(coldClient.source),sessionId:'cold'});let sent;
+  const fresh=createConversationSession({steward,stateStore:coldClient.source,mode:'temporary',recoverConversation:false,recoveredTurns:[old.turn],memoryStore:{recall:async()=>null},provider:async envelope=>{sent=envelope;return JSON.stringify({version:'0.2',reply:'The current plan.',intent:'conversation',route:'reply',affect:envelope.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[]}});}});
+  await fresh.send('What is our current plan?');assert.deepEqual(sent.memory.recent,[]);assert.equal(sent.context.currentState.short[0].text,'The goal remains; code two replaces code one.');assert.ok(!JSON.stringify(sent).includes('RAW_OLD_CODE'));
+});
+
+test('project lookup does not absorb private project knowledge into an existing temporary Everyday package',async()=>{
+  const f=fixture();f.files.get('atlas').record.short=[{source:'creation:1',text:'PRIVATE_ATLAS_KNOWLEDGE'}];
+  const c=chat(f.open().source,e=>e.user.text==='Our temporary goal.'?{rebuild:'meaningful_event',changes:[change(e,'global','short','A temporary global goal.','EXPAND',[unit('goal','A temporary global goal.',e.user.source)])]}:{},[],{mode:'temporary',sessionId:'reader'});
+  await c.session.send('Our temporary goal.');const lookup=await c.session.send('What is the Atlas situation?');assert.equal(lookup.receipt.outcome.status,'project_looked_up');assert.equal(c.steward.activeProjectId,null);assert.equal(c.session.memoryStatus.scopeId,'everyday');assert.ok(!JSON.stringify(c.session.memoryStatus.current).includes('PRIVATE_ATLAS_KNOWLEDGE'));
+  await c.session.send('Continue our global goal.');assert.ok(!JSON.stringify(c.last).includes('PRIVATE_ATLAS_KNOWLEDGE'));assert.equal(f.writes.length,0);
+});
+
+test('cancelling the ordinary Sleep handoff prevents reflective provider calls and all storage access',async()=>{
+  const {setupSleepPanel}=await import('./sleep-panel.mjs');const original=globalThis.document,nodes=new Map();let accesses=0;
+  const node=()=>({handlers:{},addEventListener(name,fn){this.handlers[name]=fn;},replaceChildren(){},querySelector(){return{focus(){}};}});
+  const byId=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};globalThis.document={getElementById:byId};
+  try{
+    setupSleepPanel({store:{},journal:{async sleepEvidence(){accesses++;throw Error('Must not read.');}},provider(){accesses++;throw Error('Must not call.');},beforeRun:async()=>false,run:(_label,action)=>action()});
+    assert.match(await byId('sleep-run').handlers.click(),/Sleep cancelled/);assert.equal(accesses,0);
+  }finally{if(original===undefined)delete globalThis.document;else globalThis.document=original;}
 });

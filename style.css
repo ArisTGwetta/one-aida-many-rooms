@@ -65,3 +65,9 @@ pre { background: #eef4ee; padding: .75rem; border-radius: .5rem; white-space: p
 .sleep-card { padding: .8rem; margin: .7rem 0; border: 1px solid currentColor; border-radius: .6rem; overflow-wrap: anywhere; }
 .sleep-card h4 { margin: 0; }
 .sleep-card p { white-space: pre-wrap; }
+/* Privacy mode is shared by Classic and Mobile, like the existing composer. */
+#memory-modes { margin: .5rem 0; padding: .4rem; border: 1px solid var(--line); }
+#memory-modes button[aria-pressed="true"] { outline: 2px solid currentColor; font-weight: 700; }
+#memory-mode-status { margin: .35rem 0; font-size: .85em; }
+#memory-transition { max-width: min(34rem, 88vw); max-height: 85dvh; overflow: auto; background: var(--paper, #f6f5ef); color: var(--ink, #203832); }
+#memory-transition button { display: block; margin: .65rem 0; width: 100%; }

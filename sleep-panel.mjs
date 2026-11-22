@@ -2,7 +2,7 @@ import { createSleepCycle } from "./sleep.mjs";
 
 const byId = id => document.getElementById(id);
 
-export function setupSleepPanel({ store, journal, run, provider }) {
+export function setupSleepPanel({ store, journal, run, provider, beforeRun=async()=>true }) {
   const cycle = createSleepCycle({ journal, store, provider });
   const status = byId("sleep-status");
   const report = byId("sleep-report");
@@ -135,6 +135,7 @@ export function setupSleepPanel({ store, journal, run, provider }) {
   }
 
   async function runCycle(cursor) {
+    if(!await beforeRun())return 'Sleep cancelled; no provider call or archive write.';
     const result = await cycle(cursor);
     evidenceCursor = result.next;
     olderEvidence.hidden = !evidenceCursor;

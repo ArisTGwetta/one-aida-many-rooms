@@ -19,7 +19,9 @@ Runtime provenance is recorded in each slot's `deployment.json`. Source commits
 and publication commits are distinct. Historical publication commits preserve
 the exact prior trees for rollback, without requiring live per-commit deployments.
 
-Mission 008 candidate source: `252f4b18ec5f379c570f14d7ffe631daa34e26b9`.
+Original Mission 008 candidate source `252f4b18ec5f379c570f14d7ffe631daa34e26b9`
+was rejected. The recovery replaces CANDIDATE in place; read
+`/candidate/deployment.json` for its exact runtime source commit.
 CURRENT source: `c1c6fb59191d9c40f2e77eb15233cba6da54593a`, explicitly
 confirmed by Francisco as the retained everyday baseline with known limitations.
 Do not substitute an older Theater checkpoint based on its test record.
