@@ -28,6 +28,10 @@ let canSend = () => Boolean(session);
 let refreshJournalControls = () => {};
 const send = byId("send");
 const localDevelopment = location.origin === "http://127.0.0.1:8787";
+window.addEventListener('beforeunload',event=>{
+  const state=session?.memoryStatus;
+  if(state&&(state.review.unreviewedSources||state.mode==='temporary'&&state.meaningfulChanges||state.review.pendingCommit)){event.preventDefault();event.returnValue='';}
+});
 
 function show(result) {
   byId("file-id").textContent = result.fileId;
@@ -82,9 +86,15 @@ async function setupChat(folderId) {
   const contextSource = createContextSource(folderId, () => token);
   const livingSessionId=crypto.randomUUID();
   let conversationMode='temporary';
+  let conversationEpoch=0;
   const archivePending=new Map();
   let mindEvidence={};
-  function mindTrace(phase,value){if(phase==='checked_out')mindEvidence={};mindEvidence[phase]=value;byId('mind-trace').textContent=JSON.stringify({phase,...mindEvidence},null,2);}
+  function refreshMindInspector(){
+    const state=session?.memoryStatus;if(!state)return;
+    byId('mind-inspector-status').textContent=`${state.scopeId} · ${state.mode} · committed revision ${state.committedRevision}; working meaning revision ${state.current?.meaningRevision??0} · ${state.review.last?.status??'not evaluated'} · ${state.review.unreviewedSources} unreviewed source(s)`;
+    byId('mind-inspector-state').textContent=JSON.stringify({activeScope:state.scopeId,mode:state.mode,stateKind:state.mode==='temporary'?'temporary working understanding; not saved':'durable working understanding; see verified commit',committedVersion:state.committedRevision,workingMeaningRevision:state.current?.meaningRevision,long:state.current?.long,short:state.current?.short,orientation:state.current?.orientation,lastMemoryEvaluation:state.review.last,provisionalObservations:state.review.observations,persistence:state.persistence,lastVerifiedCommit:mindEvidence.committed??mindEvidence.review_checkpoint?.committed??mindEvidence.session_ended?.verified??mindEvidence.handoff?.verified??null,diagnostics:state.diagnostics,pendingSources:state.review.pendingSources},null,2);
+  }
+  function mindTrace(phase,value){if(phase==='checked_out')mindEvidence={};mindEvidence[phase]=value;byId('mind-trace').textContent=JSON.stringify({phase,...mindEvidence},null,2);refreshMindInspector();}
   function mindContext(context){
     const select=byId('mind-scope');select.replaceChildren();
     for(const item of [{id:'',name:'Everyday Aida'},...context.projects]){const option=document.createElement('option');option.value=item.id;option.textContent=item.name;select.append(option);}
@@ -213,8 +223,9 @@ async function setupChat(folderId) {
     byId("project-confirm").disabled = running || !token || !projectPreview;
     byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
-    for(const id of ['mind-scope','mind-check','mind-resume','mind-takeover','mind-handoff','mind-sleep','mode-temporary','mode-durable'])byId(id).disabled=running||!token||!session||(Boolean(pending)&&!['mind-handoff','mind-sleep'].includes(id));
-    byId('mind-discard').disabled=running||!session||!pending;
+    for(const id of ['mind-scope','mind-check','mind-resume','mind-takeover','mind-handoff','mind-sleep','mind-review','mode-temporary','mode-durable'])byId(id).disabled=running||!token||!session||(Boolean(pending)&&!['mind-handoff','mind-sleep'].includes(id));
+    refreshMindInspector();
+    byId('mind-discard').disabled=running||!session||!(pending||session.memoryStatus.review.pendingCommit);
     byId("sleep-controls").disabled = running || !token;
     for (const id of ["journal-resume", "journal-new", "journal-inspect", "journal-older"]) {
       byId(id).disabled = running || !token || Boolean(pending);
@@ -396,7 +407,7 @@ async function setupChat(folderId) {
     }
   }
 
-  function resetChat({ id, turns, entries }) {
+  function resetChat({ id, turns, entries,reason='authorized_drive_recovery' }) {
     clearProjectPreview();
     palace.clear();
     glasses.reset();
@@ -419,6 +430,7 @@ async function setupChat(folderId) {
       memoryStore: store,
       steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: byId('mind-state-only').checked?[]:turns, skills,sessionId:livingSessionId })),
       mode:conversationMode,stateStore:contextSource,
+      sessionId:`${livingSessionId}:${++conversationEpoch}`,conversationId:id,resetReason:reason,
       async archiveTurns(results){
         for(const result of results){
           let item=archivePending.get(result.turn.turnId);
@@ -430,7 +442,7 @@ async function setupChat(folderId) {
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
       async provider(envelope, image) {
-        const call = { purpose: envelope.librarySuggestion ? "suggest_library_query" : providerCalls.length ? "answer_with_skill_result" :
+        const call = { purpose: envelope.context?.memoryReview?.reviewOnly?'memory_review:'+envelope.context.memoryReview.triggers.join(','):envelope.librarySuggestion ? "suggest_library_query" : providerCalls.length ? "answer_with_skill_result" :
           envelope.context.retrievalComplete ? "answer_with_preloaded_context" : "answer_or_request_skill",
           provider: selection.provider, model: selection.model, usage: null };
         providerCalls.push(call);
@@ -498,6 +510,7 @@ async function setupChat(folderId) {
       pending.journalVerified = stored.fileId;
       if (pending.checkpoint) {
         const verified = await contextSource.commitCheckpoint(pending.checkpoint,'drive:'+stored.fileId);
+        session.acceptCommit(verified);
         byId('context-status').textContent = 'Memory checkpoint verified: ' + JSON.stringify(verified.records);
         byId('mind-status').textContent='Current state committed and verified in Drive.';
         mindTrace('committed',{operationId:verified.operationId,scopes:verified.records});
@@ -515,7 +528,7 @@ async function setupChat(folderId) {
     run("Recovering conversation from Drive…", () => recover(conversationField.value.trim()), journalStatus));
   byId("journal-new").addEventListener("click", () => run("Starting a conversation…", async () => {
     if(!await endConversation())return 'New conversation cancelled; temporary work retained.';
-    resetChat({ id: crypto.randomUUID(), turns: [], entries: [] });
+    resetChat({ id: crypto.randomUUID(), turns: [], entries: [],reason:'explicit_new_conversation' });
     mindContext(await session.checkout());
     return "New conversation.";
   }, journalStatus));
@@ -548,34 +561,51 @@ async function setupChat(folderId) {
   async function changeMode(next){
     try{
     if(pending)await savePending();
+    if(session.memoryStatus.review.unreviewedSources){providerCalls=[];selection=await prepareSelection();}
     let result=await session.setMode(next);
     if(result.needsChoice){const choice=await preservationChoice();if(choice==='cancel')return 'Mode unchanged; temporary work retained.';result=await session.setMode(next,choice);}
     conversationMode=next;preceding=undefined;support.checked=false;showMode();mindTrace('mode_changed',result);
     return next==='temporary'?'Just chatting. Future changes remain session-local. Previously committed memory is unchanged.':'Remember with me. Temporary preservation choices completed; see verified receipts.';
-    }finally{conversationMode=session.memoryStatus.mode;showMode();}
+    }catch(error){throw Object.assign(error,{providerCalls});}finally{conversationMode=session.memoryStatus.mode;showMode();}
   }
   async function endConversation(){
+    try{
     if(pending)await savePending();
+    if(session.memoryStatus.review.unreviewedSources||session.recentTurnCount){providerCalls=[];selection=await prepareSelection();}
     let result=await session.endSession();
     if(result.needsDecision){const choice=await preservationChoice(true);if(choice==='cancel')return false;result=await session.endSession(choice==='understanding'?'understanding':'discard');}
     preceding=undefined;mindTrace('session_ended',result);showMode();
-    byId('mind-status').textContent=result.verified?'Understanding saved and read back; raw temporary conversation was not archived.':'Session ended. Uncommitted temporary understanding was discarded; durable memory is unchanged.';
+    byId('mind-status').textContent=result.verified?'Understanding saved and read back; raw temporary conversation was not archived.':conversationMode==='durable'?'Durable handoff completed. Previously verified understanding retained; no additional commit was needed.':'Session ended. Uncommitted temporary understanding was discarded; durable memory is unchanged.';
     return true;
+    }catch(error){throw Object.assign(error,{providerCalls});}
   }
   for(const mode of ['temporary','durable'])byId('mode-'+mode).addEventListener('click',()=>run('Changing conversation privacy mode…',()=>changeMode(mode),byId('mind-status')));
   byId('mind-sleep').addEventListener('click',()=>run('Ending this conversation safely…',async()=>await endConversation()?'Session handoff completed.':'Sleep cancelled; temporary work retained.',byId('sleep-status')));
   byId('mobile-sleep').addEventListener('click',()=>run('Preparing Sleep handoff…',async()=>await endConversation()?'Session handoff completed. Reflective Sleep remains an explicit separate action.':'Sleep cancelled; temporary work retained.',byId('sleep-status')));
-  byId('mind-resume').addEventListener('click',()=>run('Resuming latest committed state…',async()=>{if(session.memoryStatus.temporaryExchanges&&!await endConversation())return 'Resume cancelled.';return mindContext({...await session.discardTemporary(),inspectionOnly:true});},byId('mind-status')));
+  byId('mind-resume').addEventListener('click',()=>run('Resuming latest committed state…',async()=>{
+    if(session.memoryStatus.review.pendingCommit){if(!confirm('Discard this reviewed but uncommitted local interpretation and read the latest Drive state? No existing Drive record will be erased.'))return 'Resume cancelled; reviewed work retained.';return mindContext({...await session.discardReviewedUpdate(),inspectionOnly:true});}
+    if(session.memoryStatus.temporaryExchanges&&!await endConversation())return 'Resume cancelled.';
+    if(session.memoryStatus.review.unreviewedSources){providerCalls=[];selection=await prepareSelection();}
+    return mindContext({...await session.discardTemporary(),inspectionOnly:true});
+  },byId('mind-status')));
   showMode();
+  byId('mind-review').addEventListener('click',()=>run('Reviewing eligible evidence without silently retaining it…',async()=>{
+    providerCalls=[];selection=await prepareSelection();
+    try{const result=await session.review('explicit_review');const committed=await session.commitReview();mindTrace('review_checkpoint',{...result,committed});byId('conversation-evidence').textContent=JSON.stringify({callPhase:'memory_review',providerCalls,review:result.artifact,committed},null,2);byId('conversation-details').hidden=false;return 'Memory review completed. Review artifact is session-local; any durable understanding requires verified commit.';}
+    catch(error){mindTrace('review_failed',{review:session.memoryStatus.review,diagnostic:error.diagnostic});throw Object.assign(error,{providerCalls});}
+  },byId('mind-status')));
   byId('mind-check').addEventListener('click',()=>run('Inspecting authoritative current state without writing…',async()=>mindContext(await session.inspect()),byId('mind-status')));
   byId('mind-takeover').addEventListener('click',()=>run('Taking over this scope; other client writes will be rejected…',async()=>{
     if(!confirm('Take over the durable checkout? The latest committed state is retained, but unsaved work in another browser cannot be recovered.'))return 'Takeover cancelled.';
     await steward.checkoutContext(await steward.assemble([],{source:'session:takeover',role:'user',text:'Explicit durable checkout takeover.'}),{takeover:true,preserveWorking:true});
     return mindContext(await session.checkout());
   },byId('mind-status')));
-  byId('mind-handoff').addEventListener('click',()=>run('Verifying pending work and releasing current scope…',async()=>{if(pending)await savePending();const result=await session.handoff();mindTrace('handoff',result);return 'Verified current state retained. Checkout released for another device.';},byId('mind-status')));
-  byId('mind-discard').addEventListener('click',()=>run('Discarding the uncommitted local update only…',async()=>{const old=pending;if(!old)return 'No pending update.';const turn=old.turn??old.event?.turns.find(t=>t.turnId===(old.checkpoint?.operationId??old.event.eventId));if(turn)session.omitTurn(turn);pending=undefined;mindTrace('discarded_uncommitted',{operationId:old.checkpoint?.operationId??old.event?.eventId,evidenceFileId:old.journalVerified??old.fileId??null,canonicalStateUnchanged:true});return 'Uncommitted local update discarded. Drive evidence and verified current state are unchanged.';},byId('mind-status')));
-  byId('mind-scope').addEventListener('change',()=>run('Loading selected room continuity…',async()=>{const target=byId('mind-scope').value||null;if(pending)await savePending();if(session.memoryStatus.temporaryExchanges&&!await endConversation()){byId('mind-scope').value=steward.activeProjectId??'';return 'Room change cancelled.';}clearProjectPreview();palace.clear();glasses.reset();transcript.replaceChildren();preceding=undefined;return mindContext(await session.enterScope(target));},byId('mind-status')));
+  byId('mind-handoff').addEventListener('click',()=>run('Verifying pending work and releasing current scope…',async()=>{if(pending)await savePending();if(session.memoryStatus.review.unreviewedSources){providerCalls=[];selection=await prepareSelection();}const result=await session.handoff();mindTrace('handoff',result);return 'Verified current state retained. Checkout released for another device.';},byId('mind-status')));
+  byId('mind-discard').addEventListener('click',()=>run('Discarding the uncommitted local update only…',async()=>{
+    if(session.memoryStatus.review.pendingCommit){if(!confirm('Discard the completed review update that has not been committed? Existing Drive memory remains unchanged.'))return 'Reviewed update retained.';await session.discardReviewedUpdate();mindTrace('discarded_review',session.memoryStatus);return 'Reviewed local update discarded; committed Drive memory unchanged.';}
+    const old=pending;if(!old)return 'No pending update.';const turn=old.turn??old.event?.turns.find(t=>t.turnId===(old.checkpoint?.operationId??old.event.eventId));if(turn)session.omitTurn(turn);pending=undefined;mindTrace('discarded_uncommitted',{operationId:old.checkpoint?.operationId??old.event?.eventId,evidenceFileId:old.journalVerified??old.fileId??null,canonicalStateUnchanged:true});return 'Uncommitted local update discarded. Drive evidence and verified current state are unchanged.';
+  },byId('mind-status')));
+  byId('mind-scope').addEventListener('change',()=>run('Loading selected room continuity…',async()=>{const target=byId('mind-scope').value||null;if(pending)await savePending();if(session.memoryStatus.temporaryExchanges&&!await endConversation()){byId('mind-scope').value=steward.activeProjectId??'';return 'Room change cancelled.';}if(session.memoryStatus.review.unreviewedSources){providerCalls=[];selection=await prepareSelection();}clearProjectPreview();palace.clear();glasses.reset();transcript.replaceChildren();preceding=undefined;return mindContext(await session.enterScope(target));},byId('mind-status')));
 
   byId("chat-form").addEventListener("submit", event => {
     event.preventDefault();
@@ -629,7 +659,7 @@ async function setupChat(folderId) {
       } }));
       const needsCheckpoint = conversationMode==='durable'&&checkpointEligible(result,chosenDisposition);
       byId('mind-scope').value=result.envelope.context.currentProjectId??'';
-      mindTrace('proposed',{scopeId:result.turn.scopeId,mode:conversationMode,modelRequest:result.requestContext,previous:result.envelope.context.currentState,after:result.memoryStatus.current,proposed:result.receipt.proposed??[],validation:result.receipt.rejected??[],noChange:!result.receipt.applied.length,persistence:needsCheckpoint?'pending':conversationMode==='temporary'?'session-local; not saved or archived':'no durable change'});
+      mindTrace('proposed',{scopeId:result.turn.scopeId,mode:conversationMode,modelRequest:result.requestContext,previous:result.envelope.context.currentState,after:result.memoryStatus.current,proposed:result.receipt.proposed??[],validation:result.receipt.rejected??[],evaluation:result.receipt.evaluation??null,semanticStatus:result.receipt.semanticStatus??'legacy',noUnderstandingChange:result.receipt.evaluation?.decision==='no_change',longShortUnchanged:JSON.stringify([result.envelope.context.currentState.long,result.envelope.context.currentState.short])===JSON.stringify([result.memoryStatus.current.long,result.memoryStatus.current.short]),personalFactsProposed:result.receipt.candidates?.filter(c=>c.layer==='facts'&&c.scope==='global').length??0,reviewOutcome:result.receipt.evaluation?.outcome,provisionalObservations:result.receipt.evaluation?.observations??[],persistence:needsCheckpoint?'pending':conversationMode==='temporary'?'session-local; not saved or archived':'no durable change',diagnostics:result.memoryStatus.diagnostics});
       disposition = needsCheckpoint && chosenDisposition === 'ephemeral' ? 'candidate' : chosenDisposition;
       preceding = { turn, disposition };
       sources = [turn.user.source, turn.aida.source];
@@ -695,6 +725,7 @@ async function setupChat(folderId) {
     }, chatStatus);
   });
   return async () => {
+    if(session){session.reauthorized();showSelection();mindTrace('authorization_refreshed',session.memoryStatus);journalStatus.textContent='Authorization refreshed; the existing working conversation and pending evidence were preserved.';return;}
     clearProjectPreview();
     contextStatus.textContent = contextEvidence.textContent = "";
     contextEvidence.hidden = true;

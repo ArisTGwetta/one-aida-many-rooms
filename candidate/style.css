@@ -69,5 +69,6 @@ pre { background: #eef4ee; padding: .75rem; border-radius: .5rem; white-space: p
 #memory-modes { margin: .5rem 0; padding: .4rem; border: 1px solid var(--line); }
 #memory-modes button[aria-pressed="true"] { outline: 2px solid currentColor; font-weight: 700; }
 #memory-mode-status { margin: .35rem 0; font-size: .85em; }
+#mind-inspector pre { max-height: 16rem; overflow: auto; }
 #memory-transition { max-width: min(34rem, 88vw); max-height: 85dvh; overflow: auto; background: var(--paper, #f6f5ef); color: var(--ink, #203832); }
 #memory-transition button { display: block; margin: .65rem 0; width: 100%; }
