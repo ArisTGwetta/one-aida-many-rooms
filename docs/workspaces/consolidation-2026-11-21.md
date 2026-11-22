@@ -6,6 +6,8 @@ Repository: `ArisTGwetta/one-aida-many-rooms`.
 Home: `C:/Users/arist/Documents/Codex/One-Aida-Many-Rooms-Canonical`.
 Branch: `aida-v1`, based on `a0aa76df1e67e019c4711aa7414c6204469bab56`, not the former `b016d39` checkout.
 
+GitHub's default development branch was set to `aida-v1` and read back successfully. Pages was checked before and after: its source remains `pages-preview-7827a28` at `/`. Fresh clones now select the intended source without changing the hosted application.
+
 The original Mission 006 `cbb60139e782a64b061b33a21b6aa8c48707874e` remains in this ancestry. Later modular skills, UI, Library, Glasses, Snail and Theater source branches are ancestors of the chosen base. Four unique acceptance documents were integrated unchanged from their original documentation commits. The Memory Bridge remains subject to real ordinary-chat cold-start/correction acceptance.
 
 ## History secured before retirement
@@ -84,4 +86,3 @@ A real temporary loopback HTTP smoke test loaded **38 owned assets**, syntax-che
 Pages source stays `pages-preview-7827a28` at `336fb8f152cebdff58eb33dfa663551e4e0be1a5`, branch root. Ordinary preview: https://aristgwetta.github.io/one-aida-many-rooms/preview/c1c6fb5/ . Existing harness: https://aristgwetta.github.io/one-aida-many-rooms/preview/a0aa76d/acceptance/memory-bridge/ . The older root stays `71a08ee`. Local publishing worktree removal does not alter hosted files. No source switch, app deployment, live Drive mutation, provider call or OAuth change was part of consolidation.
 
 Next implementation/acceptance follows [memory contract v1](../architecture/memory-contract-v1.md): automatic SHORT + cold recovery, corrections, SHORT→LONG, evolving beliefs, scope/retention and Sleep reconciliation. Component tests are not proof that memory works.
-
