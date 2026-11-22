@@ -1,0 +1,7 @@
+{
+  "slot": "CANDIDATE",
+  "sourceCommit": "252f4b18ec5f379c570f14d7ffe631daa34e26b9",
+  "status": "awaiting live acceptance",
+  "promotionRequires": "Explicit user acceptance",
+  "runtimeFiles": 62
+}

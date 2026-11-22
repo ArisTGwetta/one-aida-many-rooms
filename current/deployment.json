@@ -1,0 +1,7 @@
+{
+  "slot": "CURRENT",
+  "sourceCommit": "c1c6fb59191d9c40f2e77eb15233cba6da54593a",
+  "status": "user-designated everyday baseline; known limitations",
+  "promotionRequires": "Explicit user acceptance",
+  "runtimeFiles": 60
+}
