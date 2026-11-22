@@ -1,7 +1,9 @@
 {
   "slot": "CANDIDATE",
-  "sourceCommit": "252f4b18ec5f379c570f14d7ffe631daa34e26b9",
-  "status": "awaiting live acceptance",
+  "sourceCommit": "2428b2fdb19c7435cb2b525e74b4219a05e712ad",
+  "status": "Mission 008 recovery; awaiting live acceptance",
+  "runtimeFiles": 62,
   "promotionRequires": "Explicit user acceptance",
-  "runtimeFiles": 62
+  "tests": "168/168 automated; live memory acceptance unverified",
+  "currentSourceCommit": "c1c6fb59191d9c40f2e77eb15233cba6da54593a"
 }

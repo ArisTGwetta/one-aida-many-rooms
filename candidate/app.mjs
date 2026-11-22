@@ -53,6 +53,11 @@ async function run(label, action, target = status) {
       browserKey = undefined;
     }
     target.textContent = error.message;
+    if(error.diagnostic==='mind_checkout_conflict'){
+      byId('living-mind-controls').open=true;
+      byId('mind-status').textContent=error.message+' Inspect reads the latest committed state without writing. Resume keeps durable state; Take over is explicit.';
+      document.dispatchEvent(new CustomEvent('aida-mind-attention'));
+    }
     if (target.id === "chat-status" && (error.projectRead || error.providerCalls?.length)) {
       byId("conversation-evidence").textContent = JSON.stringify({ callPhase: error.callPhase ?? null, projectRead: error.projectRead ?? null,
         diagnostic: error.diagnostic ?? null, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
@@ -76,14 +81,16 @@ async function setupChat(folderId) {
   const sleepStore = createSleepStore(folderId, () => token);
   const contextSource = createContextSource(folderId, () => token);
   const livingSessionId=crypto.randomUUID();
+  let conversationMode='temporary';
+  const archivePending=new Map();
   let mindEvidence={};
   function mindTrace(phase,value){if(phase==='checked_out')mindEvidence={};mindEvidence[phase]=value;byId('mind-trace').textContent=JSON.stringify({phase,...mindEvidence},null,2);}
   function mindContext(context){
     const select=byId('mind-scope');select.replaceChildren();
     for(const item of [{id:'',name:'Everyday Aida'},...context.projects]){const option=document.createElement('option');option.value=item.id;option.textContent=item.name;select.append(option);}
     select.value=context.currentProjectId??'';
-    byId('mind-status').textContent=`${context.currentState.scopeId}: checked out; committed revision ${context.currentState.revision}, meaning revision ${context.currentState.meaningRevision}.`;
-    mindTrace('checked_out',{current:context.currentState,global:context.globalState});
+    byId('mind-status').textContent=`${context.currentState.scopeId}: ${context.inspectionOnly?'read-only inspection; working state unchanged':conversationMode==='temporary'?'read-only recovery; session-local working state':'durable mode; ownership verified separately'}; committed revision ${context.currentState.revision}, meaning revision ${context.currentState.meaningRevision}.`;
+    mindTrace('checked_out',{current:context.currentState,global:context.globalState,mode:conversationMode});
     return 'Current state loaded from Drive.';
   }
   const projectPanel = byId("project-preview");
@@ -206,7 +213,7 @@ async function setupChat(folderId) {
     byId("project-confirm").disabled = running || !token || !projectPreview;
     byId("project-cancel").disabled = running;
     byId("context-controls").disabled = running || !token;
-    for(const id of ['mind-scope','mind-check','mind-takeover','mind-handoff'])byId(id).disabled=running||!token||!session||(Boolean(pending)&&id!=='mind-handoff');
+    for(const id of ['mind-scope','mind-check','mind-resume','mind-takeover','mind-handoff','mind-sleep','mode-temporary','mode-durable'])byId(id).disabled=running||!token||!session||(Boolean(pending)&&!['mind-handoff','mind-sleep'].includes(id));
     byId('mind-discard').disabled=running||!session||!pending;
     byId("sleep-controls").disabled = running || !token;
     for (const id of ["journal-resume", "journal-new", "journal-inspect", "journal-older"]) {
@@ -357,6 +364,7 @@ async function setupChat(folderId) {
 
   const clearSleepPanel = setupSleepPanel({
     store: sleepStore, journal, run,
+    async beforeRun(){if(!await endConversation())return false;return true;},
     async provider(sleep) { return invokeProvider({ ...await prepareSelection(), sleep }); }
   });
   function showJournalContext() {
@@ -409,7 +417,15 @@ async function setupChat(folderId) {
     showSelection();
     session = createConversationSession({
       memoryStore: store,
-      steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: turns, skills,sessionId:livingSessionId })),
+      steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: byId('mind-state-only').checked?[]:turns, skills,sessionId:livingSessionId })),
+      mode:conversationMode,stateStore:contextSource,
+      async archiveTurns(results){
+        for(const result of results){
+          let item=archivePending.get(result.turn.turnId);
+          if(!item){item={event:makeJournalEvent(conversationId,{...result.turn,conversationId},'candidate')};archivePending.set(result.turn.turnId,item);}
+          if(!item.verified){const saved=await journal.save(item);item.verified=saved.fileId;}
+        }
+      },
       recoverConversation:!byId('mind-state-only').checked,
       loadCanonicalFacts: sleepStore.canonicalFacts,
       recoveredTurns: turns,
@@ -498,7 +514,7 @@ async function setupChat(folderId) {
   byId("journal-resume").addEventListener("click", () =>
     run("Recovering conversation from Drive…", () => recover(conversationField.value.trim()), journalStatus));
   byId("journal-new").addEventListener("click", () => run("Starting a conversation…", async () => {
-    await session.handoff();
+    if(!await endConversation())return 'New conversation cancelled; temporary work retained.';
     resetChat({ id: crypto.randomUUID(), turns: [], entries: [] });
     mindContext(await session.checkout());
     return "New conversation.";
@@ -515,11 +531,51 @@ async function setupChat(folderId) {
   byId("journal-inspect").addEventListener("click", () => run("Reading saved exchanges…", () => inspect(), journalStatus));
   older.addEventListener("click", () => run("Reading older exchanges…", () => inspect(nextPage), journalStatus));
   retry.addEventListener("click", () => run("Retrying journal save…", savePending, journalStatus));
-  byId('mind-check').addEventListener('click',()=>run('Loading authoritative current state…',async()=>mindContext(await session.checkout()),byId('mind-status')));
-  byId('mind-takeover').addEventListener('click',()=>run('Taking over this scope; other client writes will be rejected…',async()=>mindContext(await session.checkout({takeover:true})),byId('mind-status')));
+  function showMode(){
+    for(const mode of ['temporary','durable'])byId('mode-'+mode).setAttribute('aria-pressed',String(conversationMode===mode));
+    byId('memory-mode-status').textContent=conversationMode==='temporary'?'Just chatting: evolving understanding is session-local, unsaved and not archived.':'Remember with me: meaningful changes and eligible exchanges are saved with readback verification.';
+  }
+  function preservationChoice(ending=false){
+    const dialog=byId('memory-transition');
+    const state=session.memoryStatus;
+    const understanding=value=>value?Object.fromEntries(['scopeId','revision','long','short','recent','facts','insights','review','affect','orientation'].map(key=>[key,value[key]])):null;
+    byId('memory-transition-state').textContent=JSON.stringify({scopeId:state.scopeId,committed:understanding(state.committed),working:understanding(state.current),temporaryExchanges:state.temporaryExchanges,rawConversation:'Not included in Save understanding only.'},null,2);
+    byId('memory-transition-explanation').textContent=ending?'Your temporary understanding differs from committed memory. Save understanding only, without archiving raw conversation, or let it go. Cancel keeps the session open.':'Choose exactly what to preserve from temporary conversation before durable mode starts. No temporary content is saved automatically.';
+    for(const id of ['preserve-exchanges','preserve-both'])byId(id).hidden=ending;
+    dialog.returnValue='cancel';dialog.showModal();
+    return new Promise(resolve=>dialog.addEventListener('close',()=>resolve(dialog.returnValue),{once:true}));
+  }
+  async function changeMode(next){
+    try{
+    if(pending)await savePending();
+    let result=await session.setMode(next);
+    if(result.needsChoice){const choice=await preservationChoice();if(choice==='cancel')return 'Mode unchanged; temporary work retained.';result=await session.setMode(next,choice);}
+    conversationMode=next;preceding=undefined;support.checked=false;showMode();mindTrace('mode_changed',result);
+    return next==='temporary'?'Just chatting. Future changes remain session-local. Previously committed memory is unchanged.':'Remember with me. Temporary preservation choices completed; see verified receipts.';
+    }finally{conversationMode=session.memoryStatus.mode;showMode();}
+  }
+  async function endConversation(){
+    if(pending)await savePending();
+    let result=await session.endSession();
+    if(result.needsDecision){const choice=await preservationChoice(true);if(choice==='cancel')return false;result=await session.endSession(choice==='understanding'?'understanding':'discard');}
+    preceding=undefined;mindTrace('session_ended',result);showMode();
+    byId('mind-status').textContent=result.verified?'Understanding saved and read back; raw temporary conversation was not archived.':'Session ended. Uncommitted temporary understanding was discarded; durable memory is unchanged.';
+    return true;
+  }
+  for(const mode of ['temporary','durable'])byId('mode-'+mode).addEventListener('click',()=>run('Changing conversation privacy mode…',()=>changeMode(mode),byId('mind-status')));
+  byId('mind-sleep').addEventListener('click',()=>run('Ending this conversation safely…',async()=>await endConversation()?'Session handoff completed.':'Sleep cancelled; temporary work retained.',byId('sleep-status')));
+  byId('mobile-sleep').addEventListener('click',()=>run('Preparing Sleep handoff…',async()=>await endConversation()?'Session handoff completed. Reflective Sleep remains an explicit separate action.':'Sleep cancelled; temporary work retained.',byId('sleep-status')));
+  byId('mind-resume').addEventListener('click',()=>run('Resuming latest committed state…',async()=>{if(session.memoryStatus.temporaryExchanges&&!await endConversation())return 'Resume cancelled.';return mindContext({...await session.discardTemporary(),inspectionOnly:true});},byId('mind-status')));
+  showMode();
+  byId('mind-check').addEventListener('click',()=>run('Inspecting authoritative current state without writing…',async()=>mindContext(await session.inspect()),byId('mind-status')));
+  byId('mind-takeover').addEventListener('click',()=>run('Taking over this scope; other client writes will be rejected…',async()=>{
+    if(!confirm('Take over the durable checkout? The latest committed state is retained, but unsaved work in another browser cannot be recovered.'))return 'Takeover cancelled.';
+    await steward.checkoutContext(await steward.assemble([],{source:'session:takeover',role:'user',text:'Explicit durable checkout takeover.'}),{takeover:true,preserveWorking:true});
+    return mindContext(await session.checkout());
+  },byId('mind-status')));
   byId('mind-handoff').addEventListener('click',()=>run('Verifying pending work and releasing current scope…',async()=>{if(pending)await savePending();const result=await session.handoff();mindTrace('handoff',result);return 'Verified current state retained. Checkout released for another device.';},byId('mind-status')));
   byId('mind-discard').addEventListener('click',()=>run('Discarding the uncommitted local update only…',async()=>{const old=pending;if(!old)return 'No pending update.';const turn=old.turn??old.event?.turns.find(t=>t.turnId===(old.checkpoint?.operationId??old.event.eventId));if(turn)session.omitTurn(turn);pending=undefined;mindTrace('discarded_uncommitted',{operationId:old.checkpoint?.operationId??old.event?.eventId,evidenceFileId:old.journalVerified??old.fileId??null,canonicalStateUnchanged:true});return 'Uncommitted local update discarded. Drive evidence and verified current state are unchanged.';},byId('mind-status')));
-  byId('mind-scope').addEventListener('change',()=>run('Loading selected room continuity…',async()=>{if(pending)await savePending();clearProjectPreview();palace.clear();glasses.reset();return mindContext(await session.enterScope(byId('mind-scope').value||null));},byId('mind-status')));
+  byId('mind-scope').addEventListener('change',()=>run('Loading selected room continuity…',async()=>{const target=byId('mind-scope').value||null;if(pending)await savePending();if(session.memoryStatus.temporaryExchanges&&!await endConversation()){byId('mind-scope').value=steward.activeProjectId??'';return 'Room change cancelled.';}clearProjectPreview();palace.clear();glasses.reset();transcript.replaceChildren();preceding=undefined;return mindContext(await session.enterScope(target));},byId('mind-status')));
 
   byId("chat-form").addEventListener("submit", event => {
     event.preventDefault();
@@ -535,7 +591,8 @@ async function setupChat(folderId) {
       chatStatus.textContent = "Image inspection is available only on the hosted OpenAI route. No image was sent.";
       return;
     }
-    const chosenDisposition = dispositionFor(submitted, retention.value);
+    const selectedDisposition=dispositionFor(submitted,'auto');
+    const chosenDisposition=conversationMode==='temporary'&&selectedDisposition!=='excluded'?'ephemeral':selectedDisposition;
     let supportingTurn = support.checked ? availableSupport(preceding, chosenDisposition) : undefined;
     run("Reading Drive and preparing a reply…", async () => {
       providerCalls = [];
@@ -570,9 +627,9 @@ async function setupChat(folderId) {
       transcript.dispatchEvent(new CustomEvent("aida-affect", { detail: {
         valence: result.response.affect.valence, arousal: result.response.affect.arousal
       } }));
-      const needsCheckpoint = checkpointEligible(result,chosenDisposition);
+      const needsCheckpoint = conversationMode==='durable'&&checkpointEligible(result,chosenDisposition);
       byId('mind-scope').value=result.envelope.context.currentProjectId??'';
-      mindTrace('proposed',{scopeId:result.turn.scopeId,modelRequest:result.requestContext,previous:result.envelope.context.currentState,proposed:result.receipt.proposed??[],validation:result.receipt.rejected??[],persistence:needsCheckpoint?'pending':'no durable update'});
+      mindTrace('proposed',{scopeId:result.turn.scopeId,mode:conversationMode,modelRequest:result.requestContext,previous:result.envelope.context.currentState,after:result.memoryStatus.current,proposed:result.receipt.proposed??[],validation:result.receipt.rejected??[],noChange:!result.receipt.applied.length,persistence:needsCheckpoint?'pending':conversationMode==='temporary'?'session-local; not saved or archived':'no durable change'});
       disposition = needsCheckpoint && chosenDisposition === 'ephemeral' ? 'candidate' : chosenDisposition;
       preceding = { turn, disposition };
       sources = [turn.user.source, turn.aida.source];
@@ -600,7 +657,7 @@ async function setupChat(folderId) {
       byId("conversation-evidence-label").textContent = "Development evidence";
       if (message.value === submitted) message.value = "";
       retention.value = "auto";
-      if (disposition === "candidate" || disposition === "provisional") {
+      if (conversationMode==='durable'&&(disposition === "candidate" || disposition === "provisional")) {
         if (needsCheckpoint) pending = { result,turn,disposition,supportingTurn };
         else {
           const receipt = journalReceipt(result, supportingTurn);
@@ -622,7 +679,7 @@ async function setupChat(folderId) {
       } else {
         journalStatus.textContent = disposition === "excluded"
           ? "Exchange excluded from future context and Drive."
-          : "Exchange kept in page context only.";
+          : conversationMode==='temporary'?"Just chatting: working understanding evolved locally; no Drive memory or archive write.":"No meaningful memory change; no archive write.";
       }
       const outcome = result.receipt.outcome.status;
       return {
@@ -659,11 +716,8 @@ async function setupChat(folderId) {
       journalStatus.textContent = `Journal recovery failed. ${error.message}`;
       return;
     }
-    try {
-      await journal.trashExpired();
-    } catch {
-      journalStatus.textContent += " Expired entries were excluded. Drive cleanup could not finish.";
-    }
+    // Authorization/recovery is read-only. Expired entries are excluded by the
+    // reader; do not mutate other journal files as a sign-in side effect.
   };
 }
 

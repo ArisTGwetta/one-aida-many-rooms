@@ -62,13 +62,15 @@
         <div id="transcript" role="log" aria-label="Conversation"></div>
         <label for="message">Message</label>
         <textarea id="message" rows="3" maxlength="4000" required></textarea>
-        <label for="retention">Keep this exchange</label>
-        <select id="retention">
-          <option value="auto">This page only, unless I ask to remember</option>
-          <option value="provisional">Temporarily in Drive (24 hours)</option>
-          <option value="candidate">Save to the Drive journal</option>
-          <option value="exclude">Leave out of future context</option>
-        </select>
+        <fieldset id="memory-modes" aria-label="Conversation privacy mode">
+          <legend>How shall we talk?</legend>
+          <div class="actions">
+            <button id="mode-temporary" type="button" aria-pressed="true" disabled>Just chatting · temporary</button>
+            <button id="mode-durable" type="button" aria-pressed="false" disabled>Remember with me · durable</button>
+          </div>
+          <p id="memory-mode-status" role="status">Just chatting: working understanding stays in this session.</p>
+          <input id="retention" type="hidden" value="auto">
+        </fieldset>
         <label id="support-label" hidden><input type="checkbox" id="journal-support"> Include the preceding eligible exchange as supporting context</label>
         <button id="send" disabled>Send</button>
         <p id="chat-status" role="status"></p>
@@ -95,11 +97,13 @@
           <select id="mind-scope" disabled><option value="">Everyday Aida</option></select>
           <div class="actions">
             <button id="mind-check" type="button" disabled>Inspect current state</button>
+            <button id="mind-resume" type="button" disabled>Resume latest committed understanding</button>
             <button id="mind-handoff" type="button" disabled>Commit pending state and release</button>
             <button id="mind-takeover" type="button" disabled>Take over interrupted session</button>
             <button id="mind-discard" type="button" disabled>Discard uncommitted local update; keep evidence</button>
+            <button id="mind-sleep" type="button" disabled>Sleep / end this session</button>
           </div>
-          <p>Each scope uses its own current package. Taking over invalidates the other client's checkout; it cannot merge unsaved browser work.</p>
+          <p>Inspect and Resume read the latest committed package. Take over explicitly acquires the durable checkout and invalidates the previous writer; it cannot recover unsaved work from another tab. Just chatting needs no checkout.</p>
           <label><input id="mind-state-only" type="checkbox"> On New conversation, exclude recovered conversation text; use current understanding only</label>
           <p id="mind-status" role="status">Authorize Drive to check current understanding.</p>
           <details><summary>State evolution — private development evidence</summary><pre id="mind-trace"></pre></details>
@@ -159,6 +163,18 @@
       </details>
     </section>
   </main>
+  <dialog id="memory-transition" aria-labelledby="memory-transition-title">
+    <form method="dialog">
+      <h2 id="memory-transition-title">What should carry forward?</h2>
+      <p id="memory-transition-explanation"></p>
+      <details><summary>Compare committed and working understanding</summary><pre id="memory-transition-state"></pre></details>
+      <button id="preserve-understanding" value="understanding">Save understanding only</button>
+      <button id="preserve-exchanges" value="exchanges">Archive temporary exchanges only</button>
+      <button id="preserve-both" value="both">Save understanding and archive exchanges</button>
+      <button id="preserve-neither" value="neither">Let the temporary portion go</button>
+      <button value="cancel">Cancel</button>
+    </form>
+  </dialog>
   <section id="mobile-room" aria-label="Aida mobile view" hidden>
     <div class="mobile-header"><h2>Aida</h2><button id="close-mobile" type="button">Classic view</button></div>
     <div id="mobile-workspace">

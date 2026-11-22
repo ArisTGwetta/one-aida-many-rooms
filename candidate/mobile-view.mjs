@@ -15,7 +15,7 @@ const destinations = [
   [byId("mobile-label"), [document.querySelector('label[for="message"]')]],
   [byId("mobile-entry"), [message, byId("send")]],
   [byId("mobile-compose-options"), [
-    document.querySelector('label[for="retention"]'), byId("retention"), byId("support-label"),
+    byId("memory-modes"), byId("support-label"),
     byId("chat-status"), byId("chatt-open")]]
 ];
 const positions = new Map();
@@ -75,6 +75,7 @@ byId("open-mobile").addEventListener("click", () => switchView(true));
 byId("close-mobile").addEventListener("click", () => switchView(false));
 menu.addEventListener("click", () => openSettings(settings.hidden));
 byId("close-mobile-settings").addEventListener("click", () => openSettings(false));
+document.addEventListener('aida-mind-attention',()=>{if(!room.hidden)openSettings(true,false);byId('living-mind-controls').open=true;byId('mind-check').focus();byId('living-mind-controls').scrollIntoView({block:'start'});});
 function leaveTheater() {
   const panel = byId("theater-room");
   if (panel.hidden) return;

@@ -79,11 +79,18 @@ export function checkpointEligible(result, chosen) {
   // an incidental spelling/definition answer into a retained personal profile.
   if(incidentalConsultation(result.turn.user.text)&&chosen==='ephemeral')return false;
   return chosen==='candidate'||!!(result.receipt.applied.some(c=>c.operation&&c.operation!=='KEEP')||
-    result.receipt.rebuild&&result.receipt.rebuild!=='threshold');
+    result.receipt.candidates?.length||result.receipt.contradictions?.length||result.receipt.rebuild&&result.receipt.rebuild!=='threshold');
 }
 export async function fingerprint(value) {
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value)));
   return [...new Uint8Array(bytes)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+export function validStateReceipt(value){
+  return exact(value,['version','id','authority','at','sources'])&&value.version===1&&
+    /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value.id)&&value.authority==='explicit-user-consent'&&
+    typeof value.at==='string'&&/^\d{4}-\d\d-\d\dT/.test(value.at)&&Number.isFinite(Date.parse(value.at))&&
+    Array.isArray(value.sources)&&value.sources.length>0&&value.sources.length<=64&&new Set(value.sources.map(s=>s?.source)).size===value.sources.length&&
+    value.sources.every(s=>exact(s,['source','sha256'])&&text(s.source,150)&&/^[a-f0-9]{64}$/.test(s.sha256));
 }
 export function validateReview(review) {
   if(!exact(review,['candidates','questions'])||!Array.isArray(review.candidates)||!Array.isArray(review.questions)||review.candidates.length>12||review.questions.length>12)
