@@ -14,8 +14,10 @@ behavior remain live acceptance gates; component tests do not prove working memo
 This static ES-module application needs no compilation or install step. Run
 `node --test` and `node dev-server.mjs` here, then open `http://127.0.0.1:8787/`.
 Static loading needs no provider call. Local Google OAuth is not assumed authorized.
-The retained ordinary preview is https://aristgwetta.github.io/one-aida-many-rooms/preview/c1c6fb5/ .
-This consolidation does not replace it or change OAuth/Drive.
+Use [CURRENT](https://aristgwetta.github.io/one-aida-many-rooms/current/) for the
+designated working version and [CANDIDATE](https://aristgwetta.github.io/one-aida-many-rooms/candidate/)
+for acceptance testing. Follow the [two-version deployment policy](docs/deployment-policy.md).
+CURRENT is promoted only after explicit user acceptance. No new numbered previews.
 
 Aida's First Memory saves one fact as a JSON file in Google Drive and reads it back with its Drive file ID and UTC timestamp. Once saved, the fact is read-only in this prototype. Repeating the same save returns the stored record. Recall always reads Drive.
 

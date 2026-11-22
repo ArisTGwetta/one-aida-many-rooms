@@ -45,11 +45,17 @@ No replacement preview or live Drive/provider work is implied by this entry.
 Local checkpoint verification: 156/156 tests; 36-file loopback HTTP module/style
 graph; whitespace check clean. No paid calls, live Drive writes or publication.
 
-- Pages source: `pages-preview-7827a28` at `336fb8f`, branch root.
-- Temporary ordinary application: https://aristgwetta.github.io/one-aida-many-rooms/preview/c1c6fb5/
-- Root remains older `71a08ee`; it is not the current development source.
-- Existing test harness: https://aristgwetta.github.io/one-aida-many-rooms/preview/a0aa76d/acceptance/memory-bridge/
-- Do not replace the ordinary preview before separately authorized live acceptance.
+- Pages source: `pages-preview-7827a28`, branch root; source configuration unchanged.
+- CURRENT: https://aristgwetta.github.io/one-aida-many-rooms/current/ —
+  `c1c6fb59191d9c40f2e77eb15233cba6da54593a`, explicitly user-designated everyday
+  baseline with known limitations; preserve until explicit candidate acceptance.
+- CANDIDATE: https://aristgwetta.github.io/one-aida-many-rooms/candidate/ —
+  `252f4b18ec5f379c570f14d7ffe631daa34e26b9`, Mission 008 awaiting live acceptance.
+- Root and older accepted preview entry points remain historical compatibility
+  deployments. The redundant `/preview/252f4b1/` redirects to CANDIDATE.
+- Use only these two active slots; no new numbered previews. See the
+  [standing deployment policy](../deployment-policy.md).
+- Tests remain 156/156; no provider calls or Drive writes authorized by slot cleanup.
 - Source pushes/default-development-branch changes do not authorize a Pages source switch.
 - Next memory implementation must satisfy real cold-start and correction gates, not merely component tests.
 

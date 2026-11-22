@@ -24,6 +24,23 @@ Before cleanup verify the resolved target, tracked/untracked/ignored state, hist
 - Paid provider calls, live Drive mutations, deployment and unrelated infrastructure changes require current task authorization. A source push is not deployment approval.
 - Identify shared-module/schema changes before implementation. Ask only for genuinely new scope, architectural conflict or risk of unique data loss; do not repeatedly request granted approval.
 
+## Two-version deployment policy
+
+- The only active user-facing slots are `/current/` (last designated working
+  version, held unchanged until explicit user acceptance) and `/candidate/`
+  (the single version under development/live acceptance).
+- Publish repairs and later increments into CANDIDATE in place. Do not create new
+  commit-named preview deployments, daily deployment folders or parallel apps.
+- Passing automated tests does not accept CANDIDATE. Promotion to CURRENT requires
+  explicit user acceptance. Preserve CURRENT runtime bytes until then.
+- Git commits/tags provide history and rollback. Before retiring a historical
+  preview, classify it, verify Git recovery and dependencies, and preserve existing
+  accepted deployments and working entry points. Do not rewrite Git history.
+- Use the existing Pages source and Google OAuth configuration. Slot publication
+  never authorizes provider calls, Drive writes or changes to memory policy.
+- Record exact source and publication commits separately; documentation-only
+  development commits do not change the source served by a slot.
+
 ## Verification and closeout
 
 Run `node --test` here and relevant focused checks. The static ES-module app has no build/install step. `node dev-server.mjs` serves loopback; preserve route/origin restrictions. Do not assume localhost Google OAuth is authorized. Static verification needs no provider call.
