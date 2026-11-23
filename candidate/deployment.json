@@ -1,9 +1,9 @@
 {
   "slot": "CANDIDATE",
-  "sourceCommit": "2edfb0f096fef6f304df7b840198b0ecc921b9da",
-  "status": "Session-local RECENT+ and bounded prompt assembly; awaiting live acceptance",
+  "sourceCommit": "300082b023e6a530559cf55e60fa3c00d3cd50ee",
+  "status": "Focused RECENT+ evidence-contract repair; awaiting live acceptance",
   "runtimeFiles": 68,
   "promotionRequires": "Explicit user acceptance",
-  "tests": "196/196 offline; real model consolidation and phone performance unverified",
+  "tests": "198/198 offline; first-boundary and post-skill regressions passed; live model acceptance pending",
   "currentSourceCommit": "c1c6fb59191d9c40f2e77eb15233cba6da54593a"
 }
