@@ -2,7 +2,7 @@ import { parseConversationResponse, parseLibrarySuggestion } from "./conversatio
 import { awakeInstructions, awakeSchema,semanticAwakeSchema } from "./awake-context.mjs";
 import { maxSleepBytes, parseSleepResponse, sleepInstructions, sleepSchema } from "./sleep-contract.mjs";
 import { promptBudget } from './prompt-budget.mjs';
-import { consolidationSchema, consolidationInstructions } from './recent-plus.mjs';
+import { consolidationSchemaFor, consolidationInstructions } from './recent-plus.mjs';
 
 export const openAIModel = "gpt-6-luna";
 export const maxEnvelopeBytes = 48 * 1024;
@@ -162,7 +162,7 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
       reviewId:{type:'string',enum:[review.id]},scopeId:{type:'string',enum:[review.scopeId]},
       coveredSources:{type:'array',items:{type:'string',enum:review.sources},minItems:review.sources.length,maxItems:review.sources.length}
     }}}}:awakeSchema;
-    const finalSchema = object({ ...schema.properties,...(review?{candidates:object(Object.fromEntries(['facts','insights','short','long'].map(k=>[k,{...candidate,maxItems:0}])))}:{}), awake: reviewSchema,...(envelope.context?.consolidation?{consolidation:consolidationSchema}:{}) });
+    const finalSchema = object({ ...schema.properties,...(review?{candidates:object(Object.fromEntries(['facts','insights','short','long'].map(k=>[k,{...candidate,maxItems:0}])))}:{}), awake: reviewSchema,...(envelope.context?.consolidation?{consolidation:consolidationSchemaFor(envelope.context.consolidation)}:{}) });
     const skills = envelope.context?.retrievalComplete ? [] :
       envelope.context?.capabilities.filter(skill => ["read", "preview"].includes(skill.phase)) ?? [];
     const format = envelope.context

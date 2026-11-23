@@ -117,3 +117,17 @@ regressions; thirty-turn Everyday and project runs, failed consolidation/retry,
 correction, bounded prompt measurements, disposal and explicit preservation verified
 with synthetic providers/Drive. See ../architecture/recent-plus-v1.md. No publication,
 paid calls, real Drive writes or promotion. Existing CURRENT/CANDIDATE remain unchanged.
+
+### Focused RECENT+ contract repair — November 23 (acceptance pending)
+
+Consolidation response schemas now bind request ID, scope, base revision and source
+choices to the exact retiring/previous-entry reference set accepted by runtime.
+Instructions distinguish that set from the wider memory-review packet; text bounds
+are advertised. Strict validation is unchanged in authority and limits. Field-specific
+binding/entry/text/source/budget diagnostics replace the compound evidence code;
+only fixed labels, entry indexes and counts are exposed. No rejected text or IDs.
+Seven focused regressions cover the first boundary, post-skill final response,
+invalid source rejection, preserved state/evidence and same-turn retry. Full suite:
+198/198 offline. No Remember expansion, Chatt changes, routing or infrastructure work.
+Repair only existing CANDIDATE; CURRENT unchanged. No paid calls or live Drive writes.
+Live model acceptance remains required.

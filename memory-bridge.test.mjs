@@ -11,7 +11,8 @@ import { skillDescriptor } from './skill-registry.mjs';
 import {emptyMind,validateMind} from './living-mind.mjs';
 import {createProviders} from './providers.mjs';
 import {tokenCount,promptBudget} from './prompt-budget.mjs';
-import {validateConsolidation} from './recent-plus.mjs';
+import {validateConsolidation,consolidationSchemaFor} from './recent-plus.mjs';
+import {rememberSearchBinding} from './mind-palace.mjs';
 const folder='fixture-folder', conversationId='11111111-1111-4111-8111-111111111111';
 const blank=()=>({long:[],short:[],recent:[],facts:[],insights:[]});
 function fixture() {
@@ -87,7 +88,7 @@ async function stage(client,result,choice='auto') {
 }
 async function commit(client,pending){const saved=await client.journal.save(pending);return client.source.commitCheckpoint(pending.checkpoint,'drive:'+saved.fileId);}
 
-async function ordinaryChat(f,propose,{mode='temporary',mutateResponse,consolidation=false,canonicalFacts=async()=>[]}={}){
+async function ordinaryChat(f,propose,{mode='temporary',mutateResponse,consolidation=false,canonicalFacts=async()=>[],bindings=[]}={}){
   const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8'),client=f.open(),requests=[],exchanges=[],budgets=[],nodes=new Map();let completed;
   const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,hidden:false,textContent:'',handlers:{},addEventListener(name,action){this.handlers[name]=action;},dispatchEvent(){},setAttribute(){}});return nodes.get(id);};
   const sandbox={byId:get,conversationId,conversationMode:mode,providerCalls:[],selection:{provider:'openai',model:'gpt-6-luna'},pending:undefined,preceding:undefined,sources:[],disposition:'ephemeral',support:get('journal-support'),retention:get('retention'),message:get('message'),send:get('send'),transcript:get('transcript'),details:get('conversation-details'),journalStatus:get('journal-status'),chatStatus:get('chat-status'),projectData:get('project-preview-data'),projectStatus:get('project-save-status'),projectPanel:get('project-preview'),palace:{conversationEvidence:()=>undefined},glasses:{snapshot:()=>undefined},chatt:{offer(){}},localDevelopment:false,select:{value:'openai'},appendExchange:t=>exchanges.push(t),showBudget(){},showJournalContext(){},clearProjectPreview(){},prepareSelection:async()=>({provider:'openai',model:'gpt-6-luna'}),run:(_label,action)=>{completed=Promise.resolve().then(action);return completed;},CustomEvent:class{},Date,JSON,Error,dispositionFor,availableSupport:()=>undefined,visualReceipt:()=>undefined,checkpointEligible,journalReceipt,makeJournalEvent,contextSource:client.source,journal:client.journal};
@@ -96,7 +97,7 @@ async function ordinaryChat(f,propose,{mode='temporary',mutateResponse,consolida
     const reply={version:'0.2',reply:'Synthetic ordinary Chat reply.',intent:'conversation',route:'reply',affect:e.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...semanticFields(e,proposed)}};
     return Response.json({status:'completed',model:'gpt-6-luna',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({result:mutateResponse?mutateResponse(reply,e):reply})}]}],usage:{input_tokens:10,output_tokens:10}});
   }});
-  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat'}),stateStore:client.source,mode,consolidation,loadCanonicalFacts:canonicalFacts,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});budgets.push(r.promptBudget);sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage,promptBudget:r.promptBudget});return r.raw;}});
+  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat',skills:projectSkills(client.source,bindings)}),stateStore:client.source,mode,consolidation,loadCanonicalFacts:canonicalFacts,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});budgets.push(r.promptBudget);sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage,promptBudget:r.promptBudget});return r.raw;}});
   const inspect=app.slice(app.indexOf('  function refreshMindInspector(){'),app.indexOf('  function mindTrace('));
   const trace=app.slice(app.indexOf('  function mindTrace('),app.indexOf('  function mindContext('));
   const save=app.slice(app.indexOf('  async function savePending() {'),app.indexOf('\n  byId("journal-resume")'));
@@ -770,7 +771,7 @@ test('30 ordinary turns repeatedly consolidate Everyday and project RECENT+ atom
       const message=(n===1?'EARLY_REFERENCE synthetic red marker.':n===20?'CORRECTION_BLUE replace red with blue.':'Synthetic current conversation turn '+n+'.').padEnd(180,'x');
       if(n===11){
         const before=structuredClone(ui.session.memoryStatus),calls=ui.requests.length;fail=true;
-        await assert.rejects(ui.send(message),error=>error.diagnostic==='recent_plus_evidence');assert.deepEqual(ui.session.memoryStatus.current,before.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,before.recentPlus);assert.equal(ui.session.memoryStatus.diagnostics.recentMessages,before.diagnostics.recentMessages);assert.ok(ui.session.memoryStatus.review.pendingSources.length);
+        await assert.rejects(ui.send(message),error=>error.diagnostic==='recent_plus_sources_unknown');assert.deepEqual(ui.session.memoryStatus.current,before.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,before.recentPlus);assert.equal(ui.session.memoryStatus.diagnostics.recentMessages,before.diagnostics.recentMessages);assert.ok(ui.session.memoryStatus.review.pendingSources.length);
         const failed=JSON.parse(ui.requests.at(-1).input);fail=false;await ui.send(message);const retry=JSON.parse(ui.requests.at(-1).input);assert.equal(failed.user.source,retry.user.source);assert.deepEqual(failed.context.consolidation.retiring,retry.context.consolidation.retiring);assert.equal(ui.requests.length,calls+2);
       }else await ui.send(message);
       const state=ui.session.memoryStatus,budget=ui.budgets.at(-1),e=JSON.parse(ui.requests.at(-1).input);
@@ -793,7 +794,7 @@ test('30 ordinary turns repeatedly consolidate Everyday and project RECENT+ atom
 test('RECENT+ validates binding, authorized evidence, bounds and stale replacements without persistence',()=>{
   const req={id:'request-one',scopeId:'everyday',baseRevision:2,previous:{entries:[{source:'summary:old',text:'Earlier reference.'}]},retiring:[{source:'turn:one:user',text:'New evidence.'}]};
   const valid={id:req.id,scopeId:req.scopeId,baseRevision:2,entries:[{kind:'uncertainty',text:'Purpose remains uncertain.',sources:['summary:old','turn:one:user']}]};
-  assert.equal(validateConsolidation(valid,req).revision,3);
+  assert.equal(validateConsolidation(valid,req).revision,3);assert.deepEqual(consolidationSchemaFor(req).properties.entries.items.properties.sources.items.enum,['turn:one:user','summary:old']);
   for(const mutate of [v=>v.scopeId='project:other',v=>v.baseRevision=1,v=>v.id='old-attempt',v=>v.entries[0].sources=['META:secret'],v=>v.entries[0].text='x'.repeat(1201),v=>v.entries=Array(9).fill(v.entries[0])]){const v=structuredClone(valid);mutate(v);assert.throws(()=>validateConsolidation(v,req));}
   const over=structuredClone(valid);over.entries=Array.from({length:8},(_,i)=>({kind:'reference',text:('Dense unrelated words '+i+' ').repeat(35),sources:['turn:one:user']}));assert.throws(()=>validateConsolidation(over,req),e=>e.diagnostic==='recent_plus_budget');
   assert.equal(tokenCount('hello world'),2);assert.ok(tokenCount('é日本語')>0);
@@ -841,4 +842,34 @@ test('budget rejection before transport preserves RECENT+ and pending turn for a
   await assert.rejects(ui.send('Retry after reducing authorized external context.'),error=>{assert.equal(error.diagnostic,'prompt_budget');assert.ok(error.promptBudget.accountedTokens>error.promptBudget.limit);return true;});
   assert.equal(ui.requests.length,calls);assert.deepEqual(ui.session.memoryStatus.current,before.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,before.recentPlus);const pending=ui.session.memoryStatus.review.pendingSources;
   overload=false;await ui.send('Retry after reducing authorized external context.');assert.ok(pending.includes(JSON.parse(ui.requests.at(-1).input).user.source));assert.equal(f.writes.length,0);
+});
+
+test('RECENT+ first-boundary and post-skill schemas advertise only eligible sources and preserve failed-turn recovery',async()=>{
+  for(const afterSkill of [false,true]){
+    const f=fixture();let invalid=true,searches=0;
+    const ui=await ordinaryChat(f,()=>({}),{consolidation:true,bindings:[rememberSearchBinding({recall:async()=>{searches++;return null;}},()=>true)],mutateResponse:(reply,e)=>{
+      if(!e.context.consolidation)return reply;
+      if(afterSkill&&!e.context.retrievalComplete)return{skillRequest:{id:'search_remember',version:1,input:{query:'synthetic'}}};
+      reply.consolidation=scriptedConsolidation(e.context.consolidation);if(invalid)reply.consolidation.entries[0].sources=[e.user.source];return reply;
+    }});
+    for(let n=0;n<3;n++)await ui.send('Synthetic earlier exchange '+n);
+    const before=structuredClone(ui.session.memoryStatus);
+    await assert.rejects(ui.send('Synthetic boundary request.'),error=>{assert.equal(error.diagnostic,'recent_plus_sources_unknown');assert.equal(error.callPhase,afterSkill?'after_skill':'initial');assert.deepEqual(error.diagnosticDetails,{entryIndex:0,count:1,unknownCount:1,eligibleCount:2});assert.ok(!JSON.stringify(error.diagnosticDetails).includes('turn:'));return true;});
+    assert.deepEqual(ui.session.memoryStatus.current,before.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,before.recentPlus);assert.equal(ui.session.recentTurnCount,3);
+    const body=ui.requests.at(-1),e=JSON.parse(body.input),advertised=body.text.format.schema,final=advertised.properties.result?.anyOf[0]??advertised,schema=final.properties.consolidation;
+    const expected=[...new Set([...e.context.consolidation.retiring,...e.context.consolidation.previous.entries].map(v=>v.source))];
+    assert.deepEqual(schema.properties.entries.items.properties.sources.items.enum,expected);assert.ok(!expected.includes(e.user.source));assert.deepEqual(schema.properties.id.enum,[e.context.consolidation.id]);assert.deepEqual(schema.properties.scopeId.enum,[e.context.consolidation.scopeId]);assert.deepEqual(schema.properties.baseRevision.enum,[e.context.consolidation.baseRevision]);assert.ok(!new RegExp(schema.properties.entries.items.properties.text.pattern).test('x'.repeat(1201)));assert.ok(body.instructions.includes('Do not cite the incoming user message'));
+    const source=e.user.source;assert.ok(ui.session.memoryStatus.review.pendingSources.includes(source));invalid=false;await ui.send('Synthetic boundary request.');assert.equal(JSON.parse(ui.requests.at(-1).input).user.source,source);assert.equal(ui.session.memoryStatus.recentPlus.revision,1);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,4);assert.equal(searches,afterSkill?2:0);assert.equal(f.writes.length,0);
+  }
+});
+
+test('RECENT+ rejection codes distinguish individual entry requirements without exposing private values',()=>{
+  const secret='PRIVATE_SYNTHETIC_VALUE',req={id:'attempt',scopeId:'everyday',baseRevision:0,previous:{entries:[]},retiring:[{source:'eligible:one',text:'Synthetic evidence.'}]};
+  const valid={id:'attempt',scopeId:'everyday',baseRevision:0,entries:[{kind:'reference',text:'A supported reference.',sources:['eligible:one']}]};
+  for(const [change,code] of [
+    [v=>{delete v.id;},'binding_shape'],[v=>v.id=secret,'binding_id'],[v=>v.scopeId=secret,'binding_scope'],[v=>v.baseRevision=2,'binding_revision'],[v=>v.entries=null,'entries_type'],[v=>v.entries=Array(9).fill(v.entries[0]),'entries_count'],
+    [v=>{delete v.entries[0].text;},'entry_shape'],[v=>v.entries[0].kind=secret,'entry_kind'],[v=>v.entries[0].text=null,'entry_text_type'],[v=>v.entries[0].text=' ','entry_text_blank'],[v=>v.entries[0].text='x'.repeat(1201),'entry_text_length'],
+    [v=>v.entries[0].sources=secret,'sources_type'],[v=>v.entries[0].sources=[],'sources_count'],[v=>v.entries[0].sources=['eligible:one','eligible:one'],'sources_duplicate'],[v=>v.entries[0].sources=[secret],'sources_unknown']
+  ]){const value=structuredClone(valid);change(value);assert.throws(()=>validateConsolidation(value,req),error=>{assert.equal(error.diagnostic,'recent_plus_'+code);assert.ok(!JSON.stringify(error.diagnosticDetails).includes(secret));assert.ok(!error.message.includes(secret));return true;});}
+  assert.equal(validateConsolidation(valid,req).revision,1);
 });
