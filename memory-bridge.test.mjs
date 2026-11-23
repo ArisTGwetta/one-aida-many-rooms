@@ -10,6 +10,8 @@ import { projectSkills } from './project-skills.mjs';
 import { skillDescriptor } from './skill-registry.mjs';
 import {emptyMind,validateMind} from './living-mind.mjs';
 import {createProviders} from './providers.mjs';
+import {tokenCount,promptBudget} from './prompt-budget.mjs';
+import {validateConsolidation} from './recent-plus.mjs';
 const folder='fixture-folder', conversationId='11111111-1111-4111-8111-111111111111';
 const blank=()=>({long:[],short:[],recent:[],facts:[],insights:[]});
 function fixture() {
@@ -85,8 +87,8 @@ async function stage(client,result,choice='auto') {
 }
 async function commit(client,pending){const saved=await client.journal.save(pending);return client.source.commitCheckpoint(pending.checkpoint,'drive:'+saved.fileId);}
 
-async function ordinaryChat(f,propose,{mode='temporary',mutateResponse}={}){
-  const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8'),client=f.open(),requests=[],exchanges=[],nodes=new Map();let completed;
+async function ordinaryChat(f,propose,{mode='temporary',mutateResponse,consolidation=false,canonicalFacts=async()=>[]}={}){
+  const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8'),client=f.open(),requests=[],exchanges=[],budgets=[],nodes=new Map();let completed;
   const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,hidden:false,textContent:'',handlers:{},addEventListener(name,action){this.handlers[name]=action;},dispatchEvent(){},setAttribute(){}});return nodes.get(id);};
   const sandbox={byId:get,conversationId,conversationMode:mode,providerCalls:[],selection:{provider:'openai',model:'gpt-6-luna'},pending:undefined,preceding:undefined,sources:[],disposition:'ephemeral',support:get('journal-support'),retention:get('retention'),message:get('message'),send:get('send'),transcript:get('transcript'),details:get('conversation-details'),journalStatus:get('journal-status'),chatStatus:get('chat-status'),projectData:get('project-preview-data'),projectStatus:get('project-save-status'),projectPanel:get('project-preview'),palace:{conversationEvidence:()=>undefined},glasses:{snapshot:()=>undefined},chatt:{offer(){}},localDevelopment:false,select:{value:'openai'},appendExchange:t=>exchanges.push(t),showBudget(){},showJournalContext(){},clearProjectPreview(){},prepareSelection:async()=>({provider:'openai',model:'gpt-6-luna'}),run:(_label,action)=>{completed=Promise.resolve().then(action);return completed;},CustomEvent:class{},Date,JSON,Error,dispositionFor,availableSupport:()=>undefined,visualReceipt:()=>undefined,checkpointEligible,journalReceipt,makeJournalEvent,contextSource:client.source,journal:client.journal};
   const invoke=createProviders({apiKey:'synthetic-key',fetchRequest:async(url,options)=>{
@@ -94,13 +96,13 @@ async function ordinaryChat(f,propose,{mode='temporary',mutateResponse}={}){
     const reply={version:'0.2',reply:'Synthetic ordinary Chat reply.',intent:'conversation',route:'reply',affect:e.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...semanticFields(e,proposed)}};
     return Response.json({status:'completed',model:'gpt-6-luna',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({result:mutateResponse?mutateResponse(reply,e):reply})}]}],usage:{input_tokens:10,output_tokens:10}});
   }});
-  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat'}),stateStore:client.source,mode,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage});return r.raw;}});
+  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat'}),stateStore:client.source,mode,consolidation,loadCanonicalFacts:canonicalFacts,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});budgets.push(r.promptBudget);sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage,promptBudget:r.promptBudget});return r.raw;}});
   const inspect=app.slice(app.indexOf('  function refreshMindInspector(){'),app.indexOf('  function mindTrace('));
   const trace=app.slice(app.indexOf('  function mindTrace('),app.indexOf('  function mindContext('));
   const save=app.slice(app.indexOf('  async function savePending() {'),app.indexOf('\n  byId("journal-resume")'));
   const handler=app.slice(app.indexOf('  byId("chat-form").addEventListener("submit"'),app.indexOf('\n  return async () => {'));
   runInNewContext(`let mindEvidence={};${inspect}${trace}${save}${handler}`,sandbox);
-  return{client,session:sandbox.session,requests,exchanges,get,async send(text){get('message').value=text;get('chat-form').handlers.submit({preventDefault(){}});return completed;}};
+  return{client,session:sandbox.session,requests,exchanges,budgets,get,async send(text){get('message').value=text;get('chat-form').handlers.submit({preventDefault(){}});return completed;}};
 }
 test('normal awake updates checkpoint one current global LONG/SHORT/RECENT and survive outside the journal recovery window',async()=>{
   const f=fixture(),client=f.open();const c=chat(client.source,e=>e.user.text==='We approved the new plan.'?{rebuild:'meaningful_event',changes:['long','short','recent'].map(layer=>change(e,'global',layer,layer+' current plan','EXPAND',[unit(layer+'-plan','A synthetic approved plan.',e.user.source)]))}:{});
@@ -739,4 +741,104 @@ test('maximum 64-source 28000-character packet passes actual provider schema and
   const bad=structuredClone(response);bad.awake.evaluation.coveredSources[1]=bad.awake.evaluation.coveredSources[0];assert.throws(()=>parseConversationResponse(JSON.stringify(bad),e),error=>error.diagnostic==='memory_evaluation_coverage');
   // Measured bytes are not a model-token estimate or a live compliance claim.
   console.log('checkpoint-boundary-metrics '+JSON.stringify({sources:64,evidenceCharacters:28000,inputBytes:Buffer.byteLength(body.input),schemaBytes:Buffer.byteLength(JSON.stringify(body.text.format.schema)),coverageEchoBytes:Buffer.byteLength(JSON.stringify(response.awake.evaluation.coveredSources)),responseBytes:Buffer.byteLength(JSON.stringify(response)),outputTokenCeiling:body.max_output_tokens}));
+});
+
+
+// Scripted semantic interpretation exercises the real ordinary Chat/provider/
+// parser/steward path. This is not a claim of live model summarization quality.
+function scriptedConsolidation(request){
+  const old=request.previous.entries,retiring=request.retiring;
+  const revised=retiring.find(e=>e.text.includes('CORRECTION_BLUE'));
+  const previous=old.find(e=>e.kind==='reference'||e.kind==='correction');
+  const reference=revised?{kind:'correction',text:'The earlier red marker was corrected to blue; do not revive red.',sources:[revised.source]}:
+    previous?{kind:previous.kind,text:previous.text,sources:[previous.source]}:
+    {kind:'reference',text:'An early fictional marker provides the reference for this conversation.',sources:[retiring[0].source]};
+  const thread=old.find(e=>e.kind==='thread');
+  return{id:request.id,scopeId:request.scopeId,baseRevision:request.baseRevision,entries:[reference,{kind:'thread',text:'The sunlight question remains unresolved; no conclusion was established.',sources:[thread?.source??retiring.at(-1).source]}]};
+}
+
+test('30 ordinary turns repeatedly consolidate Everyday and project RECENT+ atomically with stable measured prompt budgets',async()=>{
+  const measurements=[];
+  for(const project of [null,'atlas']){
+    const f=fixture();let fail=false;
+    const ui=await ordinaryChat(f,e=>e.user.text.includes('EARLY_REFERENCE')?{changes:[change(e,project?'project':'global','short','A synthetic current-stage question.','EXPAND',[unit('current-stage','A current-stage question, not a transcript.',e.user.source)])]}:{},{consolidation:true,mutateResponse:(r,e)=>{
+      r.reply='This is a fictional planning exchange. The current-stage question remains open. We have not established the answer or changed the overall purpose. We can return to the earlier reference when it becomes relevant.';
+      if(e.context.consolidation){r.consolidation=scriptedConsolidation(e.context.consolidation);if(fail)r.consolidation.entries[0].sources=['invented:secret'];}return r;
+    }});
+    if(project)await ui.session.enterScope(project);
+    for(let n=1;n<=30;n++){
+      const message=(n===1?'EARLY_REFERENCE synthetic red marker.':n===20?'CORRECTION_BLUE replace red with blue.':'Synthetic current conversation turn '+n+'.').padEnd(180,'x');
+      if(n===11){
+        const before=structuredClone(ui.session.memoryStatus),calls=ui.requests.length;fail=true;
+        await assert.rejects(ui.send(message),error=>error.diagnostic==='recent_plus_evidence');assert.deepEqual(ui.session.memoryStatus.current,before.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,before.recentPlus);assert.equal(ui.session.memoryStatus.diagnostics.recentMessages,before.diagnostics.recentMessages);assert.ok(ui.session.memoryStatus.review.pendingSources.length);
+        const failed=JSON.parse(ui.requests.at(-1).input);fail=false;await ui.send(message);const retry=JSON.parse(ui.requests.at(-1).input);assert.equal(failed.user.source,retry.user.source);assert.deepEqual(failed.context.consolidation.retiring,retry.context.consolidation.retiring);assert.equal(ui.requests.length,calls+2);
+      }else await ui.send(message);
+      const state=ui.session.memoryStatus,budget=ui.budgets.at(-1),e=JSON.parse(ui.requests.at(-1).input);
+      assert.equal(state.scopeId,project?'project:atlas':'everyday');assert.ok(budget.withinBudget);assert.ok(e.context.memoryReview.sources.length<=7);assert.equal(e.context.global.stateRef,project?'context.globalState':'context.currentState');
+      assert.equal(e.context.currentState.conversation.length,0);assert.deepEqual(state.current.long,[]);assert.equal(state.current.short[0].text,'A synthetic current-stage question.');
+      if(n===20){assert.ok(e.context.memoryReview.triggers.includes('interval_20'));assert.equal(state.diagnostics.turnsSinceInterval,0);}
+      if(n>=4){assert.ok(tokenCount(state.recentPlus)<=800);assert.equal(e.context.consolidation.retiring.length,2);assert.ok(e.context.consolidation.retiring.every(v=>!v.text.includes('turn '+n+'.')));}
+      if(n>=8){assert.ok(!e.context.memoryReview.evidence.some(v=>v.text.includes('EARLY_REFERENCE')));assert.ok(JSON.stringify(e.context.consolidation.previous.entries).includes(n<=23?'early fictional marker':'corrected to blue'));}
+      if(n>=23)assert.ok(state.recentPlus.entries.some(v=>v.kind==='correction'&&v.text.includes('corrected to blue')));
+      if(n>=24)measurements.push({scope:state.scopeId,turn:n,inputReferenceTokens:budget.inputTokens,accounted:budget.accountedTokens,envelopeBytes:Buffer.byteLength(ui.requests.at(-1).input),summaryTokens:tokenCount(state.recentPlus),components:budget.referenceTokens});
+    }
+    const stable=measurements.filter(v=>v.scope===(project?'project:atlas':'everyday'));assert.ok(Math.max(...stable.map(v=>v.inputReferenceTokens))-Math.min(...stable.map(v=>v.inputReferenceTokens))<150);
+    assert.ok(ui.session.memoryStatus.recentPlus.revision>=27);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,30);assert.equal(f.writes.length,0);
+    await ui.session.endSession('discard');assert.equal(ui.session.memoryStatus.recentPlus,null);assert.equal(f.writes.length,0);
+    const fresh=await ordinaryChat(f,()=>({}),{consolidation:true});await fresh.send('A fresh everyday session.');assert.equal(fresh.session.memoryStatus.recentPlus,null);assert.ok(!JSON.stringify(fresh.requests[0]).includes('corrected to blue'));
+  }
+  console.log('recent-plus-30-turn-measurements '+JSON.stringify(measurements));
+});
+
+test('RECENT+ validates binding, authorized evidence, bounds and stale replacements without persistence',()=>{
+  const req={id:'request-one',scopeId:'everyday',baseRevision:2,previous:{entries:[{source:'summary:old',text:'Earlier reference.'}]},retiring:[{source:'turn:one:user',text:'New evidence.'}]};
+  const valid={id:req.id,scopeId:req.scopeId,baseRevision:2,entries:[{kind:'uncertainty',text:'Purpose remains uncertain.',sources:['summary:old','turn:one:user']}]};
+  assert.equal(validateConsolidation(valid,req).revision,3);
+  for(const mutate of [v=>v.scopeId='project:other',v=>v.baseRevision=1,v=>v.id='old-attempt',v=>v.entries[0].sources=['META:secret'],v=>v.entries[0].text='x'.repeat(1201),v=>v.entries=Array(9).fill(v.entries[0])]){const v=structuredClone(valid);mutate(v);assert.throws(()=>validateConsolidation(v,req));}
+  const over=structuredClone(valid);over.entries=Array.from({length:8},(_,i)=>({kind:'reference',text:('Dense unrelated words '+i+' ').repeat(35),sources:['turn:one:user']}));assert.throws(()=>validateConsolidation(over,req),e=>e.diagnostic==='recent_plus_budget');
+  assert.equal(tokenCount('hello world'),2);assert.ok(tokenCount('é日本語')>0);
+});
+
+test('unified provider-aware budget includes instructions, schema, context and reserved output before transport',()=>{
+  const args={provider:'openai',model:'configured-model',content:'Context',instructions:'Instructions',schema:{type:'object'},outputTokens:3000,enforce:true};
+  const open=promptBudget(args),local=promptBudget({...args,provider:'ollama'});assert.notEqual(open.limit,local.limit);assert.notEqual(open.safetyFactor,local.safetyFactor);assert.equal(open.inputTokens,Object.values(open.referenceTokens).reduce((a,b)=>a+b,0));assert.equal(open.outputReserved,3000);
+  assert.throws(()=>promptBudget({...args,instructions:'many '.repeat(25000)}),e=>e.diagnostic==='prompt_budget'&&e.promptBudget.accountedTokens>e.promptBudget.limit);
+});
+
+test('RECENT+ provenance resolves original sources without durable summary leakage or cross-room inheritance',async()=>{
+  const f=fixture(),ui=await ordinaryChat(f,()=>({}),{consolidation:true,mutateResponse:(r,e)=>{if(e.context.consolidation)r.consolidation=scriptedConsolidation(e.context.consolidation);return r;}});
+  let first;
+  for(let n=1;n<=9;n++){await ui.send('Synthetic ephemeral evidence '+n);if(n===1)first=JSON.parse(ui.requests[0].input).user.source;}
+  assert.ok(ui.session.memoryStatus.recentPlusSourceReferences.some(v=>v.originalSources.includes(first)));assert.ok(ui.session.memoryStatus.recentPlusSourceReferences.every(v=>v.originalSources.every(s=>s.startsWith('turn:'))));
+  assert.equal(ui.session.memoryStatus.meaningfulChanges,false);assert.equal(f.writes.length,0);await ui.session.endSession('discard');assert.deepEqual(ui.session.memoryStatus.recentPlusSourceReferences,[]);
+  await ui.session.enterScope('beta');await ui.send('Unrelated room.');assert.equal(ui.session.memoryStatus.recentPlus,null);assert.ok(!JSON.stringify(ui.requests.at(-1)).includes('earlier fictional marker'));assert.equal(f.writes.length,0);
+});
+
+test('explicit understanding-only preservation does not serialize RECENT+ or provenance into Everyday or project Drive records',async()=>{
+  for(const project of [null,'atlas']){
+    const f=fixture(),ui=await ordinaryChat(f,e=>e.user.text.startsWith('Keep')?{changes:[change(e,project?'project':'global','short','An explicitly authorized synthetic goal.','EXPAND',[unit('goal','An explicitly authorized synthetic goal.',e.user.source)])]}:{},{consolidation:true,mutateResponse:(r,e)=>{if(e.context.consolidation)r.consolidation=scriptedConsolidation(e.context.consolidation);return r;}});
+    if(project)await ui.session.enterScope(project);
+    await ui.send('Keep a meaningful synthetic goal.');for(let n=0;n<8;n++)await ui.send('Temporary incidental exchange '+n);
+    const source=ui.session.memoryStatus.recentPlus.entries[0].source;assert.equal(f.writes.length,0);await ui.session.endSession('understanding');
+    const stored=JSON.stringify([...f.files.values()]);assert.ok(!stored.includes('recent-plus:'));assert.ok(!stored.includes(source));assert.ok(!stored.includes('Temporary incidental exchange'));assert.equal(f.files.get(project??'global').record.short[0].text,'An explicitly authorized synthetic goal.');assert.equal(ui.session.memoryStatus.recentPlus,null);if(project)assert.deepEqual(f.files.get('global').record.short,[]);
+  }
+});
+
+test('full semantic projection is sent once per scope and budgets retain global identity and directory-only other projects',async()=>{
+  const f=fixture();f.files.get('global').record.long=[{source:'fixture:global',text:'AUTHORIZED_GLOBAL_CHARTER'}];f.files.get('atlas').record.long=[{source:'fixture:atlas',text:'PRIVATE_ATLAS_CHARTER'}];f.files.get('beta').record.long=[{source:'fixture:beta',text:'PRIVATE_BETA_CHARTER'}];
+  const ui=await ordinaryChat(f,()=>({}),{consolidation:true});await ui.session.enterScope('atlas');await ui.send('Continue the current project.');
+  const request=ui.requests[0],e=JSON.parse(request.input);assert.equal(e.identity.name,'Aida');assert.equal(e.context.currentState.scopeId,'project:atlas');assert.equal(e.context.activeProject.continuity.stateRef,'context.currentState');assert.equal(e.context.global.stateRef,'context.globalState');
+  assert.equal(request.input.split('PRIVATE_ATLAS_CHARTER').length-1,1);assert.equal(request.input.split('AUTHORIZED_GLOBAL_CHARTER').length-1,1);assert.ok(!request.input.includes('PRIVATE_BETA_CHARTER'));assert.ok(e.context.projects.some(v=>v.id==='beta'));
+  for(const wording of ['living charter and overall status','current-stage progress','distinct functions, not successive summaries','without imposing formal projects'])assert.ok(request.instructions.includes(wording));assert.equal(f.writes.length,0);
+});
+
+test('budget rejection before transport preserves RECENT+ and pending turn for a safe retry',async()=>{
+  const f=fixture();let overload=false;
+  const ui=await ordinaryChat(f,()=>({}),{consolidation:true,canonicalFacts:async()=>overload?Array.from({length:70},(_,n)=>({source:'fixture:fact:'+n,text:'a b c d '.repeat(50)})):[],mutateResponse:(r,e)=>{if(e.context.consolidation)r.consolidation=scriptedConsolidation(e.context.consolidation);return r;}});
+  for(let n=0;n<5;n++)await ui.send('Synthetic bounded context '+n);
+  const before=structuredClone(ui.session.memoryStatus),calls=ui.requests.length;
+  overload=true;
+  await assert.rejects(ui.send('Retry after reducing authorized external context.'),error=>{assert.equal(error.diagnostic,'prompt_budget');assert.ok(error.promptBudget.accountedTokens>error.promptBudget.limit);return true;});
+  assert.equal(ui.requests.length,calls);assert.deepEqual(ui.session.memoryStatus.current,before.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,before.recentPlus);const pending=ui.session.memoryStatus.review.pendingSources;
+  overload=false;await ui.send('Retry after reducing authorized external context.');assert.ok(pending.includes(JSON.parse(ui.requests.at(-1).input).user.source));assert.equal(f.writes.length,0);
 });

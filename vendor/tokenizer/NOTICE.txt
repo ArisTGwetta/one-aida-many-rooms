@@ -1,0 +1,3 @@
+js-tiktoken 1.0.21, MIT; https://github.com/dqbd/tiktoken.
+Registry archive sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==
+Selected o200k_base ranks and lite core; core import adapted to built-in atob. No runtime external dependency.

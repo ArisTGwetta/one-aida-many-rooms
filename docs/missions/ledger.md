@@ -104,3 +104,16 @@ Mechanical coverage echo remains a documented reliability risk, not weakened.
 Existing session-capacity fail-closed recovery is tested. CURRENT stays unchanged;
 CANDIDATE only. No paid calls or live Drive writes. Details and live gaps are in
 mission-008-mandatory-review.md.
+
+### Bounded prompt assembly and session-local RECENT+ — November 22 (local)
+
+LONG/SHORT responsibilities clarified as charter/status versus current-stage progress;
+RECENT+ is conversational consolidation, not semantic or durable memory. Attention
+management is recorded as a requirement, not implemented via new lifecycle operations.
+Normal Chat uses request-only deduplicated projections, an owned reference tokenizer
+and unified provider-aware budget, strict review coverage over incremental evidence,
+and atomic session-local consolidation with original-source lineage. 196/196 offline
+regressions; thirty-turn Everyday and project runs, failed consolidation/retry,
+correction, bounded prompt measurements, disposal and explicit preservation verified
+with synthetic providers/Drive. See ../architecture/recent-plus-v1.md. No publication,
+paid calls, real Drive writes or promotion. Existing CURRENT/CANDIDATE remain unchanged.

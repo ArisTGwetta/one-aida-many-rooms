@@ -15,7 +15,7 @@ const routes = new Map([
   ["/style.css", ["style.css", "text/css"]],
   ["/mobile-view.css", ["mobile-view.css", "text/css"]],
   ["/theater/theater.css", ["theater/theater.css", "text/css"]],
-  ...["living-mind.mjs", "memory-bridge.mjs", "browser-credentials.mjs", "providers.mjs",
+  ...["living-mind.mjs", "memory-bridge.mjs", "browser-credentials.mjs", "providers.mjs", "prompt-budget.mjs", "recent-plus.mjs", "vendor/tokenizer/core.mjs", "vendor/tokenizer/o200k_base.mjs",
     ...["app", "capability", "characters", "continuity", "contracts", "drive-store", "ledger", "providers", "rehearsal", "reports", "restore", "turns"].map(name => `theater/${name}.mjs`)]
     .map(name => [`/${name}`, [name, "text/javascript"]]),
   ...["snail-mini.mjs", "uncle-chatt.mjs", "visual-preparation.mjs", "vendor/pdfjs/pdf.min.mjs", "vendor/pdfjs/pdf.worker.min.mjs", "glasses.mjs", "mind-palace.mjs", "mobile-view.mjs", "emotion-portrait.mjs", "visual-display.mjs", "app.mjs", "memory.mjs", "conversation.mjs", "recent-journal.mjs", "sleep.mjs", "sleep-contract.mjs", "sleep-panel.mjs", "awake-context.mjs", "skill-registry.mjs", "project-skills.mjs"]
@@ -88,8 +88,9 @@ export async function handleRequest(request, response) {
     if (!input || typeof input !== "object") return send(response, 400, { error: "Invalid conversation request." });
     send(response, 200, await provider(input));
   } catch (error) {
+    if(error.diagnostic==='prompt_budget')return send(response,502,{error:error.message,code:'conversation_validation',diagnostic:error.diagnostic,promptBudget:error.promptBudget});
     if (error instanceof ConversationValidationError) {
-      return send(response, 502, { error: error.message, code: "conversation_validation", diagnostic: error.diagnostic, usage: error.usage });
+      return send(response, 502, { error: error.message, code: "conversation_validation", diagnostic: error.diagnostic, diagnosticDetails:error.diagnosticDetails, usage: error.usage });
     }
     send(response, 502, { error: error instanceof ProviderError
       ? error.message : "The provider reply did not match the requested contract.", usage: error.usage });

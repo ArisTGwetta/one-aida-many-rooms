@@ -1,6 +1,6 @@
 # Aida memory contract v1
 
-**Version 1.3.0 — authoritative architectural requirements.**
+**Version 1.4.0 — authoritative architectural requirements.**
 Original reconciliation: November 21, 2026. Living Mind refinement: November 22.
 This is not a declaration that the implementation satisfies every requirement.
 Envelope `0.2`, context `schema_version: 1` and Theater schemas are separate
@@ -58,6 +58,38 @@ is explicit and cannot recover another browser's unsaved work. No silent overwri
 These permissions do not authorize a new memory service, a full archival pipeline,
 automatic cross-room transfer, or automatic promotion to canonical beliefs. The
 independent reflective rhythms and all original requirements below remain binding.
+
+## Conversational consolidation and attention (v1.4 clarification)
+
+RECENT is the latest actual exchanges. Session-local RECENT+ is a bounded,
+evolving account of how earlier conversation unfolded, including references,
+corrections, uncertainty and unresolved conversational threads. It is derived
+conversational context, not SHORT, LONG, a FACT or durable project memory.
+Consolidation takes the previous RECENT+ and newly retiring exchanges; it does not
+summarize the whole conversation repeatedly. Validate replacements before releasing
+prompt material. Failed consolidation preserves the last good version and evidence.
+Temporary RECENT+ disappears on disposal/reload. It is not implicitly authorized by
+an understanding-only save. Any future durable conversational consolidation needs
+explicit scope/retention authorization; none is introduced by this increment.
+
+LONG is a living charter and overall status: what we are doing, why, what matters,
+what has been established, and the overall state. SHORT is current-stage/sprint
+progress: what is happening now, changes, blocks, unresolved matters and next steps.
+They are distinct interpretations, not successive transcript summaries. Apply the
+same distinction to everyday continuity without forcing ordinary life into projects.
+Both must stay bounded and change representation as work progresses. Completed or
+superseded details should not accumulate indefinitely in active understanding.
+
+Attention follows current strategic priorities. Importance, urgency, current
+attention and preservation are separate. A displaced unfinished initiative can be
+released from active semantic context without being declared finished, abandoned or
+cancelled. Preserve only authorized lightweight directory pointers; retrieve its
+last known scoped state when it returns. The directory discovers initiatives; it
+must not inject all their histories into each prompt. Automatic semantic retirement,
+priority management and directory ranking are NOT implemented in the RECENT+
+increment. Their eventual acceptance must cover interruption/resumption without
+loss or unauthorized retention. Existing meaning-unit limits and revision semantics
+remain unchanged until a separately approved lifecycle change.
 
 ## Authority and provenance
 

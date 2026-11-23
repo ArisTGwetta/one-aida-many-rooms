@@ -43,3 +43,11 @@ test("homepage accepts tracking parameters and chat still requires the local ori
     origin: "https://other.example", "content-type": "application/json"
   })).status, 403);
 });
+
+test('loopback rejects an oversized unified prompt budget before credentials or network dispatch',async()=>{
+  const envelope={version:'0.2',user:{text:'Synthetic budget test.'},memory:{facts:Array.from({length:70},(_,n)=>({source:'fixture:'+n,text:'a b c d '.repeat(50)})),recent:[]},environment:{tools:[]},context:{promptPolicy:{version:1},capabilities:[]}};
+  const body=Buffer.from(JSON.stringify({provider:'openai',model:'gpt-6-luna',envelope})),result={};
+  const request={url:'/dev-chat',method:'POST',headers:{host:'127.0.0.1:8787',origin:'http://127.0.0.1:8787','content-type':'application/json'},async *[Symbol.asyncIterator](){yield body;}};
+  await handleRequest(request,{writeHead(status,headers){Object.assign(result,{status,headers});},end(body){result.body=body;}});
+  assert.equal(result.status,502);const response=JSON.parse(result.body);assert.equal(response.diagnostic,'prompt_budget');assert.equal(response.code,'conversation_validation');assert.ok(response.promptBudget.accountedTokens>response.promptBudget.limit);assert.ok(!result.body.includes('a b c d'));
+});
