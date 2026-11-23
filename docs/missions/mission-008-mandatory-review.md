@@ -132,3 +132,36 @@ Francisco's separate authorization; Cody has not performed them.
    project must not receive private details. Original first memory stays unchanged.
 7. **Body/regression:** check portrait/expressions, Chat↔Library, Glasses, Theater,
    Sleep and provider settings. No live success is claimed from the offline suite.
+
+## Focused decision/outcome contract repair — November 22
+
+Live reports established three meaningful/disposable turns followed by an initial-call
+`memory_outcome` rejection. A separate first-request garden failure was reported,
+but its Development Evidence/rejected pairing was unavailable. Do not infer the
+same cause. The exact rejected live pairing remains unobserved.
+
+The model-facing instructions now spell out the validator's unchanged mapping:
+change -> updated_understanding; deferred -> deferred; no_change with a carried
+observation -> provisional_observation; no_change without one -> reviewed_discarded.
+Working changes can coexist with carried observations; change still requires
+updated_understanding. Rejection remains strict, never silently repaired.
+
+Fixed-vocabulary diagnosticDetails contain received/expected decision/outcome labels,
+a semantic-updates boolean and a carried-observation boolean. Unknown outcomes are
+reported as invalid, never copied. They flow through response parsing to failed-turn
+Development Evidence and the session-local failed-review artifact. No model text,
+source identifiers, memories or credentials are included in these details.
+
+Files: awake-context.mjs (instructions/validator diagnostics), conversation.mjs
+(error/artifact forwarding), app.mjs (failed-turn evidence), memory-bridge.test.mjs
+(regressions), this record and ledger. No schema, persistence or scope policy change.
+
+Verification: 46/46 focused and 183/183 full offline tests. All 20 outcome matrix
+cases cover valid/invalid decisions including carried observations with changes.
+An ordinary Chat four-turn fixture verifies turn 3 / meaning revision 2 divergence,
+strict turn-4 rejection, unchanged working state, retained pending evidence and
+same-source retry. First-turn rejection/privacy cases also pass. Existing deferred
+review, consultation, source validation, temporary-mode and isolation tests pass.
+Synthetic responses do not establish live model compliance. No paid calls, browser
+interactions or live Drive mutations were performed. Live candidate re-test remains
+required, as do durable cold-start, correction and checkpoint/compaction acceptance.

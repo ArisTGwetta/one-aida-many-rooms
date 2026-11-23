@@ -37,7 +37,7 @@ export function parseConversationResponse(raw, envelope) {
   } catch (error) {
     const reason = error.constructor === Error ? error.message : "The response could not be validated.";
     throw Object.assign(new ConversationValidationError(`Conversation response validation failed. ${reason}`),
-      { diagnostic: error.diagnostic });
+      { diagnostic: error.diagnostic, ...(error.diagnosticDetails ? { diagnosticDetails: error.diagnosticDetails } : {}) });
   }
 }
 
@@ -163,7 +163,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
   }
   function failedArtifact(error,context,phase){
     const scope=context?.currentState?.scopeId??currentScope;
-    lastEvaluation={version:1,reviewId:context?.memoryReview?.id,scopeId:scope,decision:'deferred',outcome:'deferred',status:'failed',reason:error.message,diagnostic:error.diagnostic??'memory_review_failed',evidenceRetained:true,durable:false,at:new Date().toISOString()};
+    lastEvaluation={version:1,reviewId:context?.memoryReview?.id,scopeId:scope,decision:'deferred',outcome:'deferred',status:'failed',reason:error.message,diagnostic:error.diagnostic??'memory_review_failed',...(error.diagnosticDetails?{diagnosticDetails:structuredClone(error.diagnosticDetails)}:{}),evidenceRetained:true,durable:false,at:new Date().toISOString()};
     artifacts.push(lastEvaluation);diagnostic.lastAttempt={scopeId:scope,status:'failed',phase,diagnostic:lastEvaluation.diagnostic};
   }
   function applyWorking(envelope,response,receipt,result){

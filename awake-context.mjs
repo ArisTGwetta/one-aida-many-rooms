@@ -47,6 +47,7 @@ export const semanticAwakeSchema=object({...awakeSchema.properties,
 });
 
 export const awakeInstructions = [
+  'Memory review decision/outcome mapping is exact: change -> updated_understanding; deferred -> deferred; no_change with at least one observation whose disposition is carry -> provisional_observation; no_change without any carried observation -> reviewed_discarded. A carried observation alone does not require decision change. Working changes and carried observations may coexist: when decision is change, outcome remains updated_understanding. Decision change requires a non-KEEP awake change, candidate, contradiction, non-null orientation focus, or unfinished add/resolve; without these use no_change or deferred. Deferred permits neither semantic updates nor observations. Never mix these pairings.',
   'Each new or revised observation has a fresh stable ID. Use relatesTo for prior versions; preserve their earlier uncertainty and never treat discarded or superseded observations as current understanding. Cite newly supplied evidence when revisiting them.',
   'When context.memoryReview is present, return awake.evaluation and awake.orientation. This is mandatory reflection, not mandatory retention. Echo reviewId, scopeId and every covered source ID. Assess short, long, orientation, unfinished and contradictions. State a grounded reason for change, no_change or deferred. Every checkpoint yields an inspectable artifact: updated_understanding, provisional_observation, reviewed_discarded, or deferred. No new personal FACT, unchanged LONG/SHORT and no useful observation are different conclusions. For routine consultations, explain reviewed_discarded rather than inventing a user trait.',
   'In that protocol awake.changes/candidates/contradictions/orientation are the sole semantic proposal path; leave all top-level compatibility candidates empty. A new user-established fictional activity can immediately establish TEMPORARY SHORT and active focus. Temporary fictional continuity is not durable canon or a real-world personal FACT. An explicit activity change revises the active focus without inferring permanent abandonment. A grounded promise to continue belongs in unfinished; resolve an existing commitment only with evidence. orientation.focus null preserves focus; unfinished add/resolve uses exact text and supplied sources. Preserve unrelated commitments.',
@@ -496,8 +497,8 @@ export function validateAwake(awake, envelope) {
   const validSources = (refs, required) => Array.isArray(refs) && refs.length <= 4 && (!required || refs.length > 0) &&
     new Set(refs).size === refs.length && refs.every(ref => known.has(ref));
   const action = awake?.action;
-  const reject = (diagnostic, message = "Invalid awake action or refresh request.") => {
-    throw Object.assign(new Error(message), { diagnostic });
+  const reject = (diagnostic, message = "Invalid awake action or refresh request.", diagnosticDetails) => {
+    throw Object.assign(new Error(message), { diagnostic, ...(diagnosticDetails ? { diagnosticDetails } : {}) });
   };
   const protocol=envelope.context.memoryReview;
   if (!exact(awake, ["action", "rebuild", "changes", "candidates", "contradictions",...(protocol?['evaluation','orientation']:[])])) reject("awake_shape");
@@ -551,9 +552,16 @@ export function validateAwake(awake, envelope) {
       if(cited.includes(envelope.user.source))reject('memory_control_evidence','A review control instruction is not evidence of an experience or fact.');
     }
     const changed=awake.changes.some(c=>c.operation!=='KEEP')||awake.candidates.length||awake.contradictions.length||orientation.focus!==null||orientation.unfinished.length;
-    if((evaluation.decision==='change')!==!!changed||evaluation.decision==='deferred'&&changed)reject('memory_decision','Memory decision disagrees with its proposed changes.');
-    const expected=evaluation.decision==='change'?'updated_understanding':evaluation.decision==='deferred'?'deferred':evaluation.observations.some(o=>o.disposition==='carry')?'provisional_observation':'reviewed_discarded';
-    if(evaluation.outcome!==expected)reject('memory_outcome','Memory review outcome is inconsistent.');
+    const carriedObservation=evaluation.observations.some(o=>o.disposition==='carry');
+    const expected=evaluation.decision==='change'?'updated_understanding':evaluation.decision==='deferred'?'deferred':carriedObservation?'provisional_observation':'reviewed_discarded';
+    // Fixed vocabulary only: never attach response text, source IDs or memories.
+    const reviewDiagnostic={
+      received:{decision:['change','no_change','deferred'].includes(evaluation.decision)?evaluation.decision:'invalid',outcome:['updated_understanding','provisional_observation','reviewed_discarded','deferred'].includes(evaluation.outcome)?evaluation.outcome:'invalid'},
+      expected:{decisions:changed?['change']:evaluation.observations.length?['no_change']:['no_change','deferred'],outcome:changed?'updated_understanding':evaluation.decision==='deferred'&&!evaluation.observations.length?'deferred':carriedObservation?'provisional_observation':'reviewed_discarded'},
+      semanticUpdates:!!changed,carriedObservation
+    };
+    if((evaluation.decision==='change')!==!!changed||evaluation.decision==='deferred'&&changed)reject('memory_decision','Memory decision disagrees with its proposed changes.',reviewDiagnostic);
+    if(evaluation.outcome!==expected)reject('memory_outcome','Memory review outcome is inconsistent.',reviewDiagnostic);
     if(evaluation.decision==='deferred'&&evaluation.observations.length)reject('memory_deferred');
     if(evaluation.observations.some(o=>o.relatesTo.length&&!o.sources.includes(envelope.user.source)&&!o.sources.some(s=>protocol.sources.includes(s))))reject('memory_observation_revision','Revising observations requires newly supplied evidence.');
     if(evaluation.outcome==='provisional_observation'&&awake.candidates.some(c=>c.scope==='global'&&c.layer==='facts'))reject('memory_observation_fact','A provisional observation is not an established personal fact.');

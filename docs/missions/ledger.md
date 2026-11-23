@@ -83,3 +83,13 @@ retired copies, preserved refs, retained exceptions and local verification.
 Future entries must report the canonical path/branch/commit, tests, live evidence,
 deployment and open gates. Keep private conversation and credentials out of this
 public ledger.
+
+### Focused review outcome repair — November 22
+
+Exact decision/outcome mapping added to model-facing instructions; strict rejection
+preserved. Privacy-safe enum/boolean diagnostics now reach failed-turn evidence and
+local review artifacts. 183/183 offline tests, including first-turn rejection,
+turn/revision divergence, carried observations, last-valid-state preservation and
+same-source retry. The garden report lacks Development Evidence; no shared cause
+is asserted. See mission-008-mandatory-review.md. CURRENT unchanged; CANDIDATE only.
+No paid calls or live Drive writes. Live model/Drive acceptance remains open.

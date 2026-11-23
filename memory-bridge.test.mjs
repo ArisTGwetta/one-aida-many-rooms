@@ -610,3 +610,48 @@ test('fresh sessions and other rooms do not inherit temporary interpretations or
   const cold=chat(f.open().source,()=>({}),[],{mode:'temporary'});await cold.session.send('Everyday conversation.');assert.ok(!JSON.stringify(cold.last).includes('PRIVATE_SYNTHETIC_ROOM_OBSERVATION'));assert.equal(cold.session.memoryStatus.review.observations.length,0);assert.equal(cold.session.memoryStatus.diagnostics.turnSequence,1);
   await c.session.endSession('discard');await c.session.enterScope(null);await c.session.send('A new everyday activity.');assert.ok(!JSON.stringify(c.last).includes('PRIVATE_SYNTHETIC_ROOM_OBSERVATION'));assert.equal(f.writes.length,0);
 });
+
+test('ordinary model instructions and strict validator agree on every decision/outcome pairing',async()=>{
+  const outcomes=['updated_understanding','provisional_observation','reviewed_discarded','deferred'];
+  const cases=[{decision:'change',expected:'updated_understanding',carry:false},{decision:'change',expected:'updated_understanding',carry:true},{decision:'no_change',expected:'provisional_observation',carry:true},{decision:'no_change',expected:'reviewed_discarded',carry:false},{decision:'deferred',expected:'deferred',carry:false}];
+  for(const row of cases)for(const outcome of outcomes){
+    const f=fixture();
+    const ui=await ordinaryChat(f,e=>row.decision==='change'?{changes:[change(e,'global','short','A synthetic working goal.','EXPAND',[unit('goal','Synthetic goal.',e.user.source)])]}:{},{mutateResponse:(reply,e)=>{
+      Object.assign(reply.awake.evaluation,{decision:row.decision,outcome});
+      if(row.carry)reply.awake.evaluation.observations=[{id:'pattern',kind:'observation',text:'A synthetic pattern with unknown purpose.',sources:[e.user.source],relatesTo:[],disposition:'carry'}];
+      return reply;
+    }});
+    if(outcome===row.expected){await ui.send('Synthetic evidence.');assert.equal(ui.session.memoryStatus.review.last.outcome,outcome);}
+    else await assert.rejects(ui.send('Synthetic evidence.'),error=>{
+      assert.equal(error.diagnostic,'memory_outcome');assert.deepEqual(error.diagnosticDetails.received,{decision:row.decision,outcome});assert.equal(error.diagnosticDetails.expected.outcome,row.expected);assert.equal(error.diagnosticDetails.carriedObservation,row.carry);assert.equal(ui.session.memoryStatus.review.last.status,'failed');assert.deepEqual(ui.session.memoryStatus.current.short,[]);assert.ok(ui.session.memoryStatus.review.pendingSources.length);return true;
+    });
+    const instructions=ui.requests[0].instructions;
+    for(const rule of ['change -> updated_understanding','deferred -> deferred','no_change with at least one observation whose disposition is carry -> provisional_observation','no_change without any carried observation -> reviewed_discarded'])assert.ok(instructions.includes(rule),rule);
+    assert.equal(f.writes.length,0);
+  }
+});
+
+test('outcome rejection preserves turn/revision divergence, pending sources and last valid state for same-turn retry',async()=>{
+  const f=fixture();let reject=true;
+  const ui=await ordinaryChat(f,e=>e.user.text==='Routine spelling consultation.'?{}:{changes:[change(e,'global','short','Synthetic fictional stage '+e.context.sessionDiagnostics.turnSequence,'EXPAND',[unit('stage-'+e.context.sessionDiagnostics.turnSequence,'Fictional progress.',e.user.source)])]},{mutateResponse:(reply,e)=>{
+    if(e.context.sessionDiagnostics.turnSequence===4&&reject)reply.awake.evaluation.outcome='reviewed_discarded';return reply;
+  }});
+  await ui.send('First fictional activity.');await ui.send('Second fictional activity.');await ui.send('Routine spelling consultation.');
+  const before=structuredClone(ui.session.memoryStatus.current);assert.equal(before.meaningRevision,2);
+  let failedSource;
+  await assert.rejects(ui.send('Synthetic fourth-turn refinement.'),error=>{assert.equal(error.diagnostic,'memory_outcome');assert.equal(error.callPhase,'initial');assert.equal(error.diagnosticDetails.expected.outcome,'updated_understanding');return true;});
+  assert.deepEqual(ui.session.memoryStatus.current,before);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,3);
+  failedSource=JSON.parse(ui.requests.at(-1).input).user.source;assert.ok(ui.session.memoryStatus.review.pendingSources.includes(failedSource));
+  assert.equal(ui.session.memoryStatus.review.last.diagnosticDetails.received.outcome,'reviewed_discarded');
+  reject=false;await ui.send('Synthetic fourth-turn refinement.');assert.equal(JSON.parse(ui.requests.at(-1).input).user.source,failedSource);assert.equal(ui.session.memoryStatus.current.meaningRevision,3);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,4);assert.equal(f.writes.length,0);
+});
+
+test('review diagnostics sanitize invalid outcomes and explain decision conflicts without leaking response content',async()=>{
+  for(const wrongDecision of [false,true]){
+    const f=fixture(),secret='PRIVATE_SYNTHETIC_CONTENT_NOT_FOR_DIAGNOSTICS';
+    const ui=await ordinaryChat(f,e=>({changes:[change(e,'global','short',secret,'EXPAND',[unit('private-unit',secret,e.user.source)])]}),{mutateResponse:reply=>{reply.awake.evaluation.outcome=secret;if(wrongDecision)reply.awake.evaluation.decision='no_change';return reply;}});
+    await assert.rejects(ui.send(secret),error=>{assert.equal(error.diagnostic,wrongDecision?'memory_decision':'memory_outcome');assert.equal(error.diagnosticDetails.received.outcome,'invalid');assert.deepEqual(error.diagnosticDetails.expected.decisions,['change']);assert.ok(!JSON.stringify(error.diagnosticDetails).includes(secret));assert.ok(!JSON.stringify(error.diagnosticDetails).includes('turn:'));return true;});
+    assert.equal(f.writes.length,0);assert.deepEqual(ui.session.memoryStatus.current.short,[]);
+  }
+  const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8');assert.match(app,/diagnosticDetails: error\.diagnosticDetails/);
+});

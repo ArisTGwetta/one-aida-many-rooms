@@ -64,7 +64,7 @@ async function run(label, action, target = status) {
     }
     if (target.id === "chat-status" && (error.projectRead || error.providerCalls?.length)) {
       byId("conversation-evidence").textContent = JSON.stringify({ callPhase: error.callPhase ?? null, projectRead: error.projectRead ?? null,
-        diagnostic: error.diagnostic ?? null, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
+        diagnostic: error.diagnostic ?? null, diagnosticDetails: error.diagnosticDetails, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
       byId("conversation-details").hidden = false;
       byId("conversation-evidence-label").textContent = "Development evidence — turn failed";
     } else if (target.id === "chat-status" && !byId("conversation-details").hidden) {
