@@ -419,7 +419,12 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         // Provisional continuity stays in its expiring journal, never in a
         // permanent snapshot or a working interpretation later checkpointed.
         const permitted = keepInContext && !visual && memoryDisposition !== 'provisional' && (memoryMode==='temporary'||!incidentalConsultation(message) || memoryDisposition === 'candidate');
-        const receipt = steward ? await steward.apply(envelope, response.awake, permitted) : undefined;
+        let receipt;
+        try{receipt=steward?await steward.apply(envelope,response.awake,permitted):undefined;}
+        catch(error){
+          if(semantic&&keepInContext){addEvidence(context.memoryReview.evidence);failedArtifact(error,context,'memory_apply');}
+          throw Object.assign(error,{callPhase:'memory_apply',projectRead:context?.projectRead});
+        }
         const aida = { source: `turn:${turnId}:aida`, role: "aida", text: response.reply };
         const deferred=semantic&&response.awake.evaluation.decision==='deferred';
         if(deferred)addEvidence(context.memoryReview.evidence);

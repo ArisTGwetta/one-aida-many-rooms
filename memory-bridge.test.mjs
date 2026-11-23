@@ -97,7 +97,7 @@ async function ordinaryChat(f,propose,{mode='temporary',mutateResponse,consolida
     const reply={version:'0.2',reply:'Synthetic ordinary Chat reply.',intent:'conversation',route:'reply',affect:e.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...semanticFields(e,proposed)}};
     return Response.json({status:'completed',model:'gpt-6-luna',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({result:mutateResponse?mutateResponse(reply,e):reply})}]}],usage:{input_tokens:10,output_tokens:10}});
   }});
-  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat',skills:projectSkills(client.source,bindings)}),stateStore:client.source,mode,consolidation,loadCanonicalFacts:canonicalFacts,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});budgets.push(r.promptBudget);sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage,promptBudget:r.promptBudget});return r.raw;}});
+  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat',skills:projectSkills(client.source,bindings)}),stateStore:client.source,mode,consolidation,loadCanonicalFacts:canonicalFacts,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});budgets.push(r.promptBudget);sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage,promptBudget:r.promptBudget,status:'completed'});return r.raw;}});
   const inspect=app.slice(app.indexOf('  function refreshMindInspector(){'),app.indexOf('  function mindTrace('));
   const trace=app.slice(app.indexOf('  function mindTrace('),app.indexOf('  function mindContext('));
   const save=app.slice(app.indexOf('  async function savePending() {'),app.indexOf('\n  byId("journal-resume")'));
@@ -872,4 +872,38 @@ test('RECENT+ rejection codes distinguish individual entry requirements without 
     [v=>v.entries[0].sources=secret,'sources_type'],[v=>v.entries[0].sources=[],'sources_count'],[v=>v.entries[0].sources=['eligible:one','eligible:one'],'sources_duplicate'],[v=>v.entries[0].sources=[secret],'sources_unknown']
   ]){const value=structuredClone(valid);change(value);assert.throws(()=>validateConsolidation(value,req),error=>{assert.equal(error.diagnostic,'recent_plus_'+code);assert.ok(!JSON.stringify(error.diagnosticDetails).includes(secret));assert.ok(!error.message.includes(secret));return true;});}
   assert.equal(validateConsolidation(valid,req).revision,1);
+});
+
+test('natural title correction at the first consolidation boundary preserves office, salary and failed-update evidence',async()=>{
+  const f=fixture();let invalid=true;
+  const ui=await ordinaryChat(f,e=>{
+    const n=e.context.sessionDiagnostics.turnSequence;
+    if(n===1)return{changes:[change(e,'global','short','Chaos is Minister of Sardines.','EXPAND',[unit('minister','Chaos is Minister of Sardines.',e.user.source,'claim')])]};
+    if(n===2)return{changes:[change(e,'global','short','Chaos is Minister of Sardines; his office is next to the kitchen.','EXPAND',[unit('office','His office is next to the kitchen.',e.user.source,'claim')])]};
+    if(n===3)return{changes:[change(e,'global','short','Chaos is Minister; office next to kitchen; salary twelve cans annually.','EXPAND',[unit('salary','Annual salary is twelve cans of sardines.',e.user.source,'claim')])]};
+    const proposal=change(e,'global','short','Chaos is Ambassador of Sardines; office next to kitchen; salary twelve cans annually.','REVISE',[unit('ambassador','Chaos is Ambassador, not Minister.',e.user.source,'claim','minister')]);
+    if(invalid){const office=e.context.currentState.short[0].meaning.find(v=>v.id==='office');proposal.sources.push(office.sources[0]);proposal.meaning.push(unit('office-resubmitted',office.text,office.sources[0],'claim','office'));}
+    return{rebuild:'correction',changes:[proposal]};
+  },{consolidation:true,mutateResponse:(r,e)=>{if(e.context.consolidation){r.consolidation=scriptedConsolidation(e.context.consolidation);r.consolidation.entries[0].text='Chaos was originally introduced as Minister; this records earlier conversation, not a verified current title.';}return r;}});
+  await ui.send('Chaos has been appointed Minister of Sardines.');await ui.send('His office will be next to the kitchen.');await ui.send('His annual salary is twelve cans of sardines.');
+  const before=structuredClone(ui.session.memoryStatus),message='Actually, his correct title is Ambassador of Sardines, not Minister.';
+  await assert.rejects(ui.send(message),error=>{assert.equal(error.diagnostic,'memory_revision_new_evidence');assert.equal(error.callPhase,'memory_apply');assert.deepEqual(error.diagnosticDetails,{scope:'global',layer:'short',unitIndex:1});assert.equal(error.providerCalls.at(-1).status,'completed');return true;});
+  assert.deepEqual(ui.session.memoryStatus.current,before.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,before.recentPlus);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,3);assert.equal(ui.session.memoryStatus.review.pendingSources.length,7);assert.equal(ui.session.memoryStatus.review.last.diagnostic,'memory_revision_new_evidence');
+  const failed=JSON.parse(ui.requests.at(-1).input);assert.ok(ui.session.memoryStatus.review.pendingSources.includes(failed.user.source));assert.ok(ui.requests.at(-1).instructions.includes('meaning is only a DELTA'));assert.ok(ui.requests.at(-1).instructions.includes('steward preserves them automatically'));
+  invalid=false;await ui.send(message);const state=ui.session.memoryStatus.current,meanings=state.short[0].meaning;
+  assert.equal(state.meaningRevision,4);assert.equal(ui.session.memoryStatus.recentPlus.revision,1);assert.ok(!meanings.some(v=>v.id==='minister'));assert.deepEqual(meanings.find(v=>v.id==='office'),before.current.short[0].meaning.find(v=>v.id==='office'));assert.deepEqual(meanings.find(v=>v.id==='salary'),before.current.short[0].meaning.find(v=>v.id==='salary'));
+  const title=meanings.find(v=>v.id==='ambassador');assert.equal(title.replaces,'minister');assert.deepEqual(title.sources,[failed.user.source]);assert.equal(ui.exchanges.length,4);assert.equal(f.writes.length,0);
+});
+
+test('revision validation distinguishes unknown, duplicate and evidence-free targets without weakening them',()=>{
+  const old=[{source:'snapshot',text:'Synthetic understanding.',meaning:[unit('old','Original claim.','old-source','claim')]}];
+  const cases=[
+    [{operation:'EXPAND',meaning:[unit('new','Wrong operation.','new-source','claim','old')]},'operation'],
+    [{operation:'REVISE',meaning:[unit('new','Unknown target.','new-source','claim','missing')]},'target_missing'],
+    [{operation:'REVISE',meaning:[unit('new','No new evidence.','old-source','claim','old')]},'new_evidence'],
+    [{operation:'REVISE',meaning:[unit('new','One replacement.','new-source','claim','old'),unit('newer','Duplicate target.','new-source','claim','old')]},'target_duplicate'],
+    [{operation:'REVISE',meaning:[unit('old','Reused identity.','new-source','claim','old')]},'id_reused'],
+    [{operation:'REVISE',meaning:[unit('new','No replacement target.','new-source')]},'target_required']
+  ];
+  for(const [proposal,code] of cases){const before=structuredClone(old);assert.throws(()=>evolve(old,{scope:'global',layer:'short',text:'Synthetic view.',...proposal},'next'),error=>{assert.equal(error.diagnostic,'memory_revision_'+code);assert.ok(!JSON.stringify(error.diagnosticDetails).includes('old-source'));return true;});assert.deepEqual(old,before);}
 });

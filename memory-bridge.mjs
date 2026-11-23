@@ -31,17 +31,20 @@ export function evolve(entries, change, source) {
   if (change.operation === 'KEEP') return null;
   const original = entries.flatMap((entry,index)=>entry.meaning ?? [{id:'legacy-'+index,kind:'interpretation',text:entry.text,sources:[entry.source],replaces:null}]);
   const next = structuredClone(original), targets = new Set();
-  for (const unit of change.meaning) {
-    if (next.some(old=>old.id===unit.id)) throw Error('Meaning IDs are immutable; use a new ID for a revision.');
+  const reject=(code,message,unitIndex)=>{throw Object.assign(Error(message),{diagnostic:'memory_revision_'+code,diagnosticDetails:{scope:['global','project'].includes(change.scope)?change.scope:'unspecified',layer:views.includes(change.layer)?change.layer:'unspecified',unitIndex}});};
+  for (const [unitIndex,unit] of change.meaning.entries()) {
+    if (next.some(old=>old.id===unit.id)) reject('id_reused','Meaning IDs are immutable; use a new ID for a revision.',unitIndex);
     if (unit.replaces !== null) {
       const index=next.findIndex(old=>old.id===unit.replaces);
-      if(change.operation!=='REVISE'||index<0||targets.has(unit.replaces)||!unit.sources.some(s=>!next[index].sources.includes(s)))
-        throw Error('A revision needs an explicit prior meaning and new evidence.');
+      if(change.operation!=='REVISE')reject('operation','A revision needs operation REVISE for a replacement.',unitIndex);
+      if(targets.has(unit.replaces))reject('target_duplicate','A revision may replace each prior meaning only once.',unitIndex);
+      if(index<0)reject('target_missing','A revision needs an explicit prior meaning in the selected scope and layer.',unitIndex);
+      if(!unit.sources.some(s=>!next[index].sources.includes(s)))reject('new_evidence','A revision needs new evidence for the meaning being replaced; omit unchanged meanings from the delta.',unitIndex);
       targets.add(unit.replaces);next.splice(index,1);
     }
     next.push(structuredClone(unit));
   }
-  if(change.operation==='REVISE'&&!targets.size)throw Error('REVISE must address an existing interpretation.');
+  if(change.operation==='REVISE'&&!targets.size)reject('target_required','REVISE must address an existing interpretation.',null);
   if(change.operation==='UNCLEAR'&&!change.meaning.some(u=>u.kind==='uncertainty'))throw Error('UNCLEAR must preserve an explicit uncertainty.');
   if(next.length>8)throw Error('Current interpretation is full; revise existing meaning explicitly.');
   return {source,text:change.text,meaning:next};

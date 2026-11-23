@@ -131,3 +131,22 @@ invalid source rejection, preserved state/evidence and same-turn retry. Full sui
 198/198 offline. No Remember expansion, Chatt changes, routing or infrastructure work.
 Repair only existing CANDIDATE; CURRENT unchanged. No paid calls or live Drive writes.
 Live model acceptance remains required.
+
+### Focused natural correction repair — November 23
+
+The live shared revision error is emitted after provider parsing, during stewardship:
+wrong replacement operation, absent/duplicate target or absent new evidence. The
+specific rejected live unit was not retained; no retrospective subcondition is
+claimed. Model instructions now explicitly distinguish complete current text from
+a delta-only meaning array: unchanged units are preserved automatically and must
+not be resubmitted as replacements using their old evidence. Strict rules remain.
+Evolution reports separate privacy-safe revision codes, scope/layer and unit index.
+The Chat apply boundary now retains the complete review evidence and emits
+callPhase memory_apply plus the specific diagnostic; provider completion is distinct
+from memory acceptance. No response is silently repaired.
+Focused tests reproduce the four-turn title/office/salary correction, staged rejection
+without partial changes, same-source retry, preserved unrelated meanings and explicit
+replacement provenance. All revision rejection branches remain fail-closed. Full
+regression result: 200/200 offline. CANDIDATE-only publication authorized; CURRENT
+unchanged. No paid calls or live Drive writes. Actual model behavior remains a live
+gate; this repair does not prove which invalid proposal the original model returned.
