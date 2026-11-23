@@ -1,9 +1,9 @@
 {
   "slot": "CANDIDATE",
-  "sourceCommit": "300082b023e6a530559cf55e60fa3c00d3cd50ee",
-  "status": "Focused RECENT+ evidence-contract repair; awaiting live acceptance",
+  "sourceCommit": "282d12ecbfcb21d924beaed71fad7ab8ca81a83a",
+  "status": "Focused revision-delta and steward-diagnostic repair; awaiting live acceptance",
   "runtimeFiles": 68,
   "promotionRequires": "Explicit user acceptance",
-  "tests": "198/198 offline; first-boundary and post-skill regressions passed; live model acceptance pending",
+  "tests": "200/200 offline; natural correction at first consolidation boundary verified synthetically",
   "currentSourceCommit": "c1c6fb59191d9c40f2e77eb15233cba6da54593a"
 }
