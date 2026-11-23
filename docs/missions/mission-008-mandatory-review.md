@@ -165,3 +165,58 @@ review, consultation, source validation, temporary-mode and isolation tests pass
 Synthetic responses do not establish live model compliance. No paid calls, browser
 interactions or live Drive mutations were performed. Live candidate re-test remains
 required, as do durable cold-start, correction and checkpoint/compaction acceptance.
+
+## Field-specific evaluation diagnostics and checkpoint bounds — November 22
+
+Kitchen Garden live evidence: seven accepted temporary turns (including a layout
+correction), then initial-call memory_evaluation rejection. The exact rejected field
+was not retained, so no retrospective specific cause is claimed. Failed/deferred
+receipt labels are client-generated, not evidence of a model deferral.
+
+The former compound validator now emits memory_evaluation_shape, _version,
+_review_id, _scope_id, _domain, _decision, _reason, _sources, _assessed or _coverage.
+Details contain only counts/booleans and fixed field labels; no raw values or IDs.
+All former requirements remain strict. Instructions distinguish 1–4 supporting
+citations from the complete coverage list and state reason/section requirements.
+The advertised schema bounds reason/array sizes and binds review/scope IDs,
+coverage length and allowed coverage IDs to the actual request. Uniqueness and
+complete membership remain runtime obligations. No automatic output repair.
+Supported pattern/enum/minItems/maxItems constraints follow the official guide:
+https://developers.openai.com/api/docs/guides/structured-outputs
+No maxLength or unsupported uniqueItems constraint was introduced.
+
+Local results: 51/51 memory-bridge tests; 188/188 full regressions; syntax and
+whitespace checks pass. Permanent tests exercise every formerly combined field,
+privacy-safe diagnostic propagation, seven meaningful turns plus turn-eight
+coverage rejection, corrected SHORT/orientation preservation at revision 7,
+15 unique retained sources, unchanged checkpoint counter, and same-source retry
+advancing to revision 8 without writes or duplicate evidence. Temporary mode stays
+private. The counter remains zero from the prior successful checkpoint, not the
+failed attempt. Prior reviewed exchanges are intentionally included for reflection.
+
+Maximum-size findings (synthetic, actual adapter/schema/parser, not a paid call):
+- The ordinary 20-turn boundary sends 39 sources; duplicated coverage is rejected
+  and same-message retry succeeds. Four supporting citations remain distinct from
+  the full coverage collection.
+- Hard-boundary packet: 64 sources, exactly 28,000 evidence JSON characters,
+  36,150 envelope bytes (below 49,152), 12,275 schema bytes, 3,137 coverage-echo bytes,
+  4,170 representative reply bytes and the existing 3,000 output-token ceiling.
+  Byte counts are not model-token measurements. Invalid duplicate coverage is
+  rejected even at this boundary. Valid scripted output passes strict validation.
+- A long deferred session can hit the existing 2 MiB retained-session limit before
+  64 sources. The limit fails closed; pending evidence and last valid state remain
+  intact and explicit review recovers them. No limit was raised.
+
+Coverage tradeoff: echoing every application-owned ID adds mechanical failure
+points and output burden, without proving that a model semantically reviewed each
+message. Binding allowed IDs/counts reduces mistakes but cannot enforce attention
+or uniqueness at generation time. A future application-bound packet fingerprint
+could reduce copying, but would change coverage semantics and needs separate
+review. This repair retains the existing full-ID coverage rule unchanged.
+
+Remaining live gates: actual model compliance/schema acceptance and interpretation,
+retry behavior, durable browser writes, cold recovery/corrections and project
+isolation. Bounded output may still truncate complex reviews. No model tokens,
+private evidence, browser state, OAuth configuration or live Drive files were used
+or changed. CURRENT and all non-CANDIDATE deployment files must remain identical.
+Files: awake-context.mjs, providers.mjs, memory-bridge.test.mjs, this record, ledger.

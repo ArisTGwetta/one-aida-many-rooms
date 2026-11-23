@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { createContextSource, createAwakeSteward, journalReceipt } from './awake-context.mjs';
-import { createConversationSession } from './conversation.mjs';
+import { createConversationSession, parseConversationResponse } from './conversation.mjs';
 import { createJournal, makeJournalEvent, dispositionFor } from './recent-journal.mjs';
 import { checkpointEligible, evolve, validateCheckpoint, validateOperation, safeReceipt, scopeAllowed } from './memory-bridge.mjs';
 import { projectSkills } from './project-skills.mjs';
@@ -585,9 +585,9 @@ test('review-only durable changes use the existing conditional writer and retry 
 test('ordinary Chat rejects unjustified no-change, fabricated citations, wrong coverage, competing proposal paths and fictional personal facts',async()=>{
   const mutations=[
     [reply=>{delete reply.awake.evaluation;},'awake_shape'],
-    [reply=>{reply.awake.evaluation.reason='';},'memory_evaluation'],
-    [reply=>{reply.awake.evaluation.coveredSources=[];},'memory_evaluation'],
-    [reply=>{reply.awake.evaluation.sources=['invented:source'];},'memory_evaluation'],
+    [reply=>{reply.awake.evaluation.reason='';},'memory_evaluation_reason'],
+    [reply=>{reply.awake.evaluation.coveredSources=[];},'memory_evaluation_coverage'],
+    [reply=>{reply.awake.evaluation.sources=['invented:source'];},'memory_evaluation_sources'],
     [(reply,e)=>{reply.candidates.short=[{text:'A second proposal route.',sources:[e.user.source],supersedes:null}];},'memory_legacy_candidates'],
     [(reply,e)=>{reply.awake.orientation.unfinished=[{operation:'resolve',text:'An invented commitment.',sources:[e.user.source]}];reply.awake.evaluation.decision='change';reply.awake.evaluation.outcome='updated_understanding';},'memory_commitment'],
     [(reply,e)=>{reply.awake.evaluation.domain='fictional';reply.awake.evaluation.decision='change';reply.awake.evaluation.outcome='updated_understanding';reply.awake.candidates=[{scope:'global',layer:'facts',text:'An unsupported real-world personal fact.',sources:[e.user.source],rationale:'Invented from fiction.'}];},'memory_domain_fact']
@@ -654,4 +654,89 @@ test('review diagnostics sanitize invalid outcomes and explain decision conflict
     assert.equal(f.writes.length,0);assert.deepEqual(ui.session.memoryStatus.current.short,[]);
   }
   const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8');assert.match(app,/diagnosticDetails: error\.diagnosticDetails/);
+});
+
+test('evaluation rejection diagnostics identify every failed field without private values',async()=>{
+  const secret='PRIVATE_SYNTHETIC_VALUE';
+  const variants=[
+    ['shape',v=>{delete v.reason;}],['version',v=>{v.version=2;}],['review_id',v=>{v.reviewId=secret;}],['scope_id',v=>{v.scopeId=secret;}],['domain',v=>{v.domain=secret;}],['decision',v=>{v.decision=secret;}],
+    ['reason',v=>{v.reason=' ';}],['reason',v=>{v.reason='x'.repeat(501);}],['sources',v=>{v.sources=[];}],['sources',v=>{v.sources=[secret];}],['sources',v=>{v.sources=Array(5).fill(v.sources[0]);}],['assessed',v=>{v.assessed=['short','short','orientation','unfinished','contradictions'];}],['coverage',v=>{v.coveredSources=[];}],['coverage',v=>{v.coveredSources=[secret];}]
+  ];
+  for(const [field,mutate] of variants){
+    const f=fixture(),ui=await ordinaryChat(f,()=>({}),{mutateResponse:r=>{mutate(r.awake.evaluation);return r;}});
+    await assert.rejects(ui.send(secret),error=>{assert.equal(error.diagnostic,'memory_evaluation_'+field);const details=JSON.stringify(error.diagnosticDetails??{});assert.ok(!details.includes(secret));assert.ok(!details.includes('turn:'));assert.equal(ui.session.memoryStatus.review.last.diagnostic,error.diagnostic);return true;});
+    assert.ok(ui.session.memoryStatus.review.pendingSources.length);assert.deepEqual(ui.session.memoryStatus.current.short,[]);assert.equal(f.writes.length,0);
+  }
+});
+
+test('eight-turn corrected understanding survives checkpoint coverage failure and deduplicated same-turn retry',async()=>{
+  const f=fixture();let fail=true;
+  const ui=await ordinaryChat(f,e=>{
+    const n=e.context.sessionDiagnostics.turnSequence,orientation={focus:{text:'Synthetic planning stage '+n,sources:[e.user.source]},unfinished:[]};
+    if(n===1)return{orientation,changes:[change(e,'global','short','Synthetic initial layout.','EXPAND',[unit('initial-layout','Synthetic initial layout.',e.user.source)])]};
+    if(n===4)return{orientation,changes:[change(e,'global','short','Synthetic corrected layout.','REVISE',[unit('corrected-layout','Synthetic corrected layout.',e.user.source,'interpretation','initial-layout')])]};
+    return{orientation};
+  },{mutateResponse:(r,e)=>{if(e.context.sessionDiagnostics.turnSequence===8&&fail)r.awake.evaluation.coveredSources=r.awake.evaluation.coveredSources.slice(1);return r;}});
+  for(let n=1;n<=7;n++)await ui.send('Synthetic planning turn '+n);
+  const before=structuredClone(ui.session.memoryStatus.current);assert.equal(before.meaningRevision,7);assert.equal(ui.session.memoryStatus.diagnostics.turnsSinceCheckpoint,0);
+  await assert.rejects(ui.send('Synthetic confirmation and unresolved planning question.'),error=>{assert.equal(error.diagnostic,'memory_evaluation_coverage');assert.deepEqual(error.diagnosticDetails,{field:'coveredSources',expectedCount:15,receivedCount:14,unique:true,missingCount:1,unexpectedCount:0});return true;});
+  const packet=JSON.parse(ui.requests.at(-1).input).context.memoryReview;
+  assert.deepEqual(ui.session.memoryStatus.current,before);assert.equal(ui.session.memoryStatus.diagnostics.turnsSinceCheckpoint,0);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,7);assert.equal(ui.session.memoryStatus.review.pendingSources.length,15);assert.equal(new Set(ui.session.memoryStatus.review.pendingSources).size,15);
+  fail=false;await ui.send('Synthetic confirmation and unresolved planning question.');const retry=JSON.parse(ui.requests.at(-1).input).context.memoryReview;
+  assert.deepEqual(retry.sources,packet.sources);assert.equal(ui.session.memoryStatus.current.meaningRevision,8);assert.equal(ui.session.memoryStatus.current.short[0].text,'Synthetic corrected layout.');assert.equal(ui.session.memoryStatus.review.pendingSources.length,1);assert.equal(f.writes.length,0);
+});
+
+function assertCheckpointContract(body,packet){
+  const advertised=body.text.format.schema,final=advertised.properties.result?.anyOf[0]??advertised,evaluation=final.properties.awake.properties.evaluation.properties;
+  assert.deepEqual(evaluation.reviewId.enum,[packet.id]);assert.deepEqual(evaluation.scopeId.enum,[packet.scopeId]);assert.deepEqual(evaluation.coveredSources.items.enum,packet.sources);assert.equal(evaluation.coveredSources.minItems,packet.sources.length);assert.equal(evaluation.coveredSources.maxItems,packet.sources.length);
+  assert.equal(evaluation.sources.minItems,1);assert.equal(evaluation.sources.maxItems,4);assert.equal(evaluation.assessed.minItems,5);assert.equal(evaluation.assessed.maxItems,5);assert.ok(new RegExp(evaluation.reason.pattern).test('A grounded reason.'));assert.ok(!new RegExp(evaluation.reason.pattern).test('x'.repeat(501)));
+  for(const text of ['1 to 4 distinct supporting citations','ALL IDs from context.memoryReview.sources exactly once','All five assessed sections'])assert.ok(body.instructions.includes(text));
+  assert.equal(body.max_output_tokens,3000);assert.ok(Buffer.byteLength(body.input)<=48*1024);
+}
+
+test('20-turn ordinary Chat checkpoint advertises full 39-source coverage, supports four citations, and rejects duplicate coverage',async()=>{
+  const f=fixture();let fail=true;
+  const ui=await ordinaryChat(f,()=>({}),{mutateResponse:(r,e)=>{
+    if(e.context.memoryReview.triggers.includes('interval_20')){r.awake.evaluation.sources=e.context.memoryReview.sources.slice(0,4);if(fail)r.awake.evaluation.coveredSources[1]=r.awake.evaluation.coveredSources[0];}return r;
+  }});
+  for(let n=1;n<20;n++)await ui.send(('Synthetic consultation '+n+' ').padEnd(500,'x'));
+  const before=structuredClone(ui.session.memoryStatus.current);
+  await assert.rejects(ui.send('Synthetic twentieth consultation.'),error=>{assert.equal(error.diagnostic,'memory_evaluation_coverage');assert.equal(error.diagnosticDetails.expectedCount,39);assert.equal(error.diagnosticDetails.receivedCount,39);assert.equal(error.diagnosticDetails.unique,false);assert.equal(error.diagnosticDetails.missingCount,1);return true;});
+  const body=ui.requests.at(-1),packet=JSON.parse(body.input).context.memoryReview;assert.ok(packet.triggers.includes('interval_20'));assertCheckpointContract(body,packet);assert.deepEqual(ui.session.memoryStatus.current,before);
+  fail=false;await ui.send('Synthetic twentieth consultation.');assert.equal(ui.session.memoryStatus.diagnostics.turnsSinceInterval,0);assert.equal(ui.session.memoryStatus.review.last.outcome,'reviewed_discarded');assert.equal(f.writes.length,0);
+});
+
+test('large deferred window reaches existing capacity without evidence loss and remains reviewable',async()=>{
+  const f=fixture();let deferred=true;
+  const ui=await ordinaryChat(f,e=>{
+    const fields=semanticFields(e);if(deferred)fields.evaluation={...fields.evaluation,decision:'deferred',outcome:'deferred',reason:'Synthetic deferred review retaining all source evidence.'};return fields;
+  });
+  let retained,stopped=false;
+  for(let n=1;n<=33;n++){
+    retained=structuredClone(ui.session.memoryStatus);
+    try{await ui.send(('Synthetic retained exchange '+n+' ').padEnd(600,'x'));}
+    catch(error){assert.match(error.message,/capacity|bounded limit/);assert.deepEqual(ui.session.memoryStatus.current,retained.current);assert.deepEqual(ui.session.memoryStatus.review.pendingSources,retained.review.pendingSources);stopped=true;break;}
+  }
+  assert.equal(stopped,true);assert.ok(retained.review.pendingSources.length>=40);assert.equal(new Set(retained.review.pendingSources).size,retained.review.pendingSources.length);
+  deferred=false;await ui.session.review('sleep');
+  const body=ui.requests.at(-1),packet=JSON.parse(body.input).context.memoryReview;assertCheckpointContract(body,packet);assert.equal(packet.sources.length,retained.review.pendingSources.length);assert.equal(ui.session.memoryStatus.review.unreviewedSources,0);assert.equal(f.writes.length,0);
+});
+
+test('maximum 64-source 28000-character packet passes actual provider schema and runtime validation without relaxing coverage',async()=>{
+  const f=fixture(),c=chat(f.open().source,()=>({}),[],{mode:'temporary'});await c.session.send('Synthetic seed.');
+  const e=structuredClone(c.last),evidence=[];
+  for(let n=0;n<32;n++)for(const role of ['user','aida'])evidence.push({source:'turn:'+crypto.randomUUID()+':'+role,role,text:'Synthetic bounded evidence.'.padEnd(300,'x')});
+  evidence.at(-1).text+='x'.repeat(28000-JSON.stringify(evidence).length);assert.equal(JSON.stringify(evidence).length,28000);
+  e.user=structuredClone(evidence.at(-2));e.memory.recent=[];e.context.currentState.conversation=[];
+  e.context.memoryReview={...e.context.memoryReview,triggers:['sleep'],reviewOnly:true,evidence,sources:evidence.map(v=>v.source),priorObservations:[]};
+  let body,response;
+  const invoke=createProviders({apiKey:'synthetic-key',fetchRequest:async(url,options)=>{
+    body=JSON.parse(options.body);const packet=JSON.parse(body.input);const fields=semanticFields(packet);fields.evaluation.sources=packet.context.memoryReview.sources.slice(0,4);
+    response={version:'0.2',reply:'Synthetic completed review.',intent:'conversation',route:'reply',affect:packet.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...fields}};
+    return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({result:response})}]}]});
+  }});
+  const reply=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});assertCheckpointContract(body,e.context.memoryReview);assert.equal(parseConversationResponse(reply.raw,e).awake.evaluation.coveredSources.length,64);
+  const bad=structuredClone(response);bad.awake.evaluation.coveredSources[1]=bad.awake.evaluation.coveredSources[0];assert.throws(()=>parseConversationResponse(JSON.stringify(bad),e),error=>error.diagnostic==='memory_evaluation_coverage');
+  // Measured bytes are not a model-token estimate or a live compliance claim.
+  console.log('checkpoint-boundary-metrics '+JSON.stringify({sources:64,evidenceCharacters:28000,inputBytes:Buffer.byteLength(body.input),schemaBytes:Buffer.byteLength(JSON.stringify(body.text.format.schema)),coverageEchoBytes:Buffer.byteLength(JSON.stringify(response.awake.evaluation.coveredSources)),responseBytes:Buffer.byteLength(JSON.stringify(response)),outputTokenCeiling:body.max_output_tokens}));
 });

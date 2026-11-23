@@ -155,7 +155,12 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
       throw new ProviderError("The selected route or image cannot be used for inspection.");
     }
     if (envelope.visualEvidence?.status === "ready" && !image) throw new ProviderError("The active image is unavailable.");
-    const finalSchema = object({ ...schema.properties,...(envelope.context?.memoryReview?{candidates:object(Object.fromEntries(['facts','insights','short','long'].map(k=>[k,{...candidate,maxItems:0}])))}:{}), awake: envelope.context?.memoryReview?semanticAwakeSchema:awakeSchema });
+    const review=envelope.context?.memoryReview;
+    const reviewSchema=review?{...semanticAwakeSchema,properties:{...semanticAwakeSchema.properties,evaluation:{...semanticAwakeSchema.properties.evaluation,properties:{...semanticAwakeSchema.properties.evaluation.properties,
+      reviewId:{type:'string',enum:[review.id]},scopeId:{type:'string',enum:[review.scopeId]},
+      coveredSources:{type:'array',items:{type:'string',enum:review.sources},minItems:review.sources.length,maxItems:review.sources.length}
+    }}}}:awakeSchema;
+    const finalSchema = object({ ...schema.properties,...(review?{candidates:object(Object.fromEntries(['facts','insights','short','long'].map(k=>[k,{...candidate,maxItems:0}])))}:{}), awake: reviewSchema });
     const skills = envelope.context?.retrievalComplete ? [] :
       envelope.context?.capabilities.filter(skill => ["read", "preview"].includes(skill.phase)) ?? [];
     const format = envelope.context

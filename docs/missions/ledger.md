@@ -93,3 +93,14 @@ turn/revision divergence, carried observations, last-valid-state preservation an
 same-source retry. The garden report lacks Development Evidence; no shared cause
 is asserted. See mission-008-mandatory-review.md. CURRENT unchanged; CANDIDATE only.
 No paid calls or live Drive writes. Live model/Drive acceptance remains open.
+
+### Evaluation diagnostics and checkpoint boundaries — November 22
+
+Strict field-specific evaluation diagnostics; explicit citations-versus-coverage
+contract; request-bound schema IDs/counts and unchanged runtime full-ID coverage.
+188/188 offline regressions (51 memory-bridge), including the eight-turn correction
+failure/retry, ordinary 20-turn checkpoint and 64-source/28,000-character packet.
+Mechanical coverage echo remains a documented reliability risk, not weakened.
+Existing session-capacity fail-closed recovery is tested. CURRENT stays unchanged;
+CANDIDATE only. No paid calls or live Drive writes. Details and live gaps are in
+mission-008-mandatory-review.md.
