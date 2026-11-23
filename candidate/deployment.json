@@ -1,9 +1,9 @@
 {
   "slot": "CANDIDATE",
-  "sourceCommit": "7124e5b610d5322bf2e7bdb07ad8032a825eb0a4",
-  "status": "Mission 008 mandatory reflection repair; awaiting live acceptance",
+  "sourceCommit": "ebe9638858c1795cf2d59f430b98e75c0178d099",
+  "status": "Mission 008 focused review-outcome repair; awaiting live acceptance",
   "runtimeFiles": 62,
   "promotionRequires": "Explicit user acceptance",
-  "tests": "180/180 offline; real model semantics and Drive acceptance unverified",
+  "tests": "183/183 offline; live model outcomes and Drive acceptance unverified",
   "currentSourceCommit": "c1c6fb59191d9c40f2e77eb15233cba6da54593a"
 }
