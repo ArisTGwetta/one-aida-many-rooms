@@ -64,7 +64,7 @@ async function run(label, action, target = status) {
     }
     if (target.id === "chat-status" && (error.projectRead || error.providerCalls?.length)) {
       byId("conversation-evidence").textContent = JSON.stringify({ callPhase: error.callPhase ?? null, projectRead: error.projectRead ?? null,
-        diagnostic: error.diagnostic ?? null, diagnosticDetails: error.diagnosticDetails, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
+        diagnostic: error.diagnostic ?? null, diagnosticDetails: error.diagnosticDetails, promptBudget:error.promptBudget, skillFailure: error.skillFailure, providerCalls: error.providerCalls }, null, 2);
       byId("conversation-details").hidden = false;
       byId("conversation-evidence-label").textContent = "Development evidence — turn failed";
     } else if (target.id === "chat-status" && !byId("conversation-details").hidden) {
@@ -92,7 +92,7 @@ async function setupChat(folderId) {
   function refreshMindInspector(){
     const state=session?.memoryStatus;if(!state)return;
     byId('mind-inspector-status').textContent=`${state.scopeId} · ${state.mode} · committed revision ${state.committedRevision}; working meaning revision ${state.current?.meaningRevision??0} · ${state.review.last?.status??'not evaluated'} · ${state.review.unreviewedSources} unreviewed source(s)`;
-    byId('mind-inspector-state').textContent=JSON.stringify({activeScope:state.scopeId,mode:state.mode,stateKind:state.mode==='temporary'?'temporary working understanding; not saved':'durable working understanding; see verified commit',committedVersion:state.committedRevision,workingMeaningRevision:state.current?.meaningRevision,long:state.current?.long,short:state.current?.short,orientation:state.current?.orientation,lastMemoryEvaluation:state.review.last,provisionalObservations:state.review.observations,persistence:state.persistence,lastVerifiedCommit:mindEvidence.committed??mindEvidence.review_checkpoint?.committed??mindEvidence.session_ended?.verified??mindEvidence.handoff?.verified??null,diagnostics:state.diagnostics,pendingSources:state.review.pendingSources},null,2);
+    byId('mind-inspector-state').textContent=JSON.stringify({activeScope:state.scopeId,mode:state.mode,stateKind:state.mode==='temporary'?'temporary working understanding; not saved':'durable working understanding; see verified commit',committedVersion:state.committedRevision,workingMeaningRevision:state.current?.meaningRevision,long:state.current?.long,short:state.current?.short,orientation:state.current?.orientation,recentPlus:state.recentPlus,recentPlusSourceReferences:state.recentPlusSourceReferences,lastMemoryEvaluation:state.review.last,provisionalObservations:state.review.observations,persistence:state.persistence,lastVerifiedCommit:mindEvidence.committed??mindEvidence.review_checkpoint?.committed??mindEvidence.session_ended?.verified??mindEvidence.handoff?.verified??null,diagnostics:state.diagnostics,pendingSources:state.review.pendingSources},null,2);
   }
   function mindTrace(phase,value){if(phase==='checked_out')mindEvidence={};mindEvidence[phase]=value;byId('mind-trace').textContent=JSON.stringify({phase,...mindEvidence},null,2);refreshMindInspector();}
   function mindContext(context){
@@ -297,7 +297,7 @@ async function setupChat(folderId) {
       if (!response.ok) {
         const ErrorType = result.code === "conversation_validation" ? ConversationValidationError : ConversationTransportError;
         throw Object.assign(new ErrorType(result.error ?? "The local server rejected the request."), {
-          diagnostic: result.diagnostic, usage: result.usage
+          diagnostic: result.diagnostic, diagnosticDetails:result.diagnosticDetails, promptBudget:result.promptBudget, usage: result.usage
         });
       }
       return result;
@@ -429,7 +429,7 @@ async function setupChat(folderId) {
     session = createConversationSession({
       memoryStore: store,
       steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: byId('mind-state-only').checked?[]:turns, skills,sessionId:livingSessionId })),
-      mode:conversationMode,stateStore:contextSource,
+      mode:conversationMode,stateStore:contextSource,consolidation:true,
       sessionId:`${livingSessionId}:${++conversationEpoch}`,conversationId:id,resetReason:reason,
       async archiveTurns(results){
         for(const result of results){
@@ -449,10 +449,10 @@ async function setupChat(folderId) {
         try {
           const input = envelope.librarySuggestion ? { librarySuggestion: envelope.librarySuggestion } : { envelope, ...(image ? { image } : {}) };
           const result = await invokeProvider({ ...selection, ...input });
-          Object.assign(call, { model: result.model, usage: result.usage, status: "completed" });
+          Object.assign(call, { model: result.model, usage: result.usage, promptBudget:result.promptBudget, status: "completed" });
           return result.raw;
         } catch (error) {
-          Object.assign(call, { usage: error.usage ?? null, status: "failed" });
+          Object.assign(call, { usage: error.usage ?? null, promptBudget:error.promptBudget, status: "failed" });
           throw error;
         } finally {
           sessionUsd += call.usage?.estimatedUsd ?? 0;

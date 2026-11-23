@@ -1,9 +1,9 @@
 {
   "slot": "CANDIDATE",
-  "sourceCommit": "74bc02d8e3832b1bfe98ea058d95858a656c6caf",
-  "status": "Mission 008 evaluation diagnostics and checkpoint-contract repair; awaiting live acceptance",
-  "runtimeFiles": 62,
+  "sourceCommit": "2edfb0f096fef6f304df7b840198b0ecc921b9da",
+  "status": "Session-local RECENT+ and bounded prompt assembly; awaiting live acceptance",
+  "runtimeFiles": 68,
   "promotionRequires": "Explicit user acceptance",
-  "tests": "188/188 offline; actual model compliance and durable acceptance unverified",
+  "tests": "196/196 offline; real model consolidation and phone performance unverified",
   "currentSourceCommit": "c1c6fb59191d9c40f2e77eb15233cba6da54593a"
 }

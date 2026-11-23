@@ -1,6 +1,8 @@
 import { validateAwake } from "./awake-context.mjs";
 import { incidentalConsultation } from './memory-bridge.mjs';
 import {aidaIdentity,restingAffect,scopeId,nextMind,emptyMind,currentPackage} from './living-mind.mjs';
+import { projectPrompt } from './prompt-budget.mjs';
+import { validateConsolidation } from './recent-plus.mjs';
 
 export const conversationVersion = "0.2";
 export class ConversationTransportError extends Error {}
@@ -59,6 +61,7 @@ function validateConversationResponse(raw, envelope) {
   }
   const fields = ["version", "reply", "intent", "route", "affect", "candidates", "tools"];
   if (envelope.context) fields.push("awake");
+  if(envelope.context?.consolidation)fields.push('consolidation');
   if (!hasFields(output, fields) ||
       output.version !== conversationVersion || !text(output.reply, 4000) ||
       !intents.includes(output.intent) || !routes.includes(output.route) || !validateAffect(output.affect)) {
@@ -97,6 +100,7 @@ function validateConversationResponse(raw, envelope) {
     !hasFields(proposal, ["tool", "purpose"]) || !available.has(proposal.tool) || !text(proposal.purpose, 500)
   )) throw new Error("Invalid tool proposal.");
   if (envelope.context) validateAwake(output.awake, envelope);
+  if(envelope.context?.consolidation)validateConsolidation(output.consolidation,envelope.context.consolidation);
   if(envelope.context?.memoryReview&&Object.values(output.candidates).some(items=>items.length))throw Object.assign(Error('Use the authoritative awake semantic proposal path; compatibility candidates must be empty.'),{diagnostic:'memory_legacy_candidates'});
   return output;
 }
@@ -111,7 +115,7 @@ export function parseLibrarySuggestion(raw) {
 }
 
 // The provider boundary accepts one envelope and returns JSON text.
-export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [], steward,recoverConversation=true,mode='legacy',stateStore,archiveTurns=async()=>{throw Error('Archiving is unavailable.');},sessionId=crypto.randomUUID(),conversationId=null,resetReason='session_created' }) {
+export function createConversationSession({ memoryStore, provider, recoveredTurns = [], loadCanonicalFacts = async () => [], steward,recoverConversation=true,mode='legacy',stateStore,archiveTurns=async()=>{throw Error('Archiving is unavailable.');},sessionId=crypto.randomUUID(),conversationId=null,resetReason='session_created',consolidation=false }) {
   let recent = recoverConversation?recoveredTurns.flatMap(turn => [turn.user, turn.aida]).slice(-recentLimit):[];
   let lastOrder = recoveredTurns.reduce((latest, turn) => Math.max(latest, turn.order), 0);
   let affect = { ...initialAffect };
@@ -124,26 +128,40 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
   let sequence=0,turnsSinceCheckpoint=0,intervalTurns=0,pendingEvidence=[],pendingAttempt,lastEvaluation=null,lastCheckpoint=-1,reviewCheckpoint,pendingReviewCommit=null;
   const sessionResults=[];
   const observations=new Map(),artifacts=[];
+  const consolidated=new Map();
+  const consolidationOrigins=new Map(); // latest summary aliases -> original turn IDs; never sent or persisted
+  function consolidationPlan(response,context){
+    if(!context?.consolidation)return null;
+    const request=context.consolidation,next=validateConsolidation(response.consolidation,request),old=consolidationOrigins.get(request.scopeId)??new Map(),origins=new Map();
+    for(const entry of next.entries){
+      const refs=[...new Set(entry.sources.flatMap(source=>old.get(source)??[source]))];
+      if(refs.length>512)throw Object.assign(new ConversationValidationError('RECENT+ provenance capacity reached; context and evidence retained.'),{diagnostic:'recent_plus_provenance_capacity'});
+      origins.set(entry.source,refs);
+    }
+    return{next,origins};
+  }
   const diagnostic={sessionId,conversationId,resetReason,resetSequence:0};
   const meaning=value=>JSON.stringify([stateLayers.map(k=>value?.[k]??[]),value?.review??{},value?.orientation??{}]);
   function clearTemporary(reason='explicit_reset'){
     if(semantic&&(pendingEvidence.length||pendingReviewCommit))throw Error('Review and verify pending understanding before discarding its evidence.');
     steward?.discardWorking?.();temporaryStates.clear();temporaryResults=[];temporaryBase=undefined;preservation=undefined;histories.delete(currentScope);affects.delete(currentScope);recent=[];pendingAttempt=undefined;lastCheckpoint=-1;
-    observations.delete(currentScope);sessionResults.length=0;turnsSinceCheckpoint=0;intervalTurns=0;diagnostic.resetReason=reason;diagnostic.resetSequence++;diagnostic.previousTurnSequence=sequence;
+    observations.delete(currentScope);consolidated.clear();consolidationOrigins.clear();sessionResults.length=0;turnsSinceCheckpoint=0;intervalTurns=0;diagnostic.resetReason=reason;diagnostic.resetSequence++;diagnostic.previousTurnSequence=sequence;
   }
   function status(){return{mode:memoryMode,scopeId:currentScope,committedRevision:temporaryBase?.revision??lastContext?.currentState.revision??null,
     meaningfulChanges:!!temporaryBase&&meaning(temporaryBase)!==meaning(lastContext?.currentState),temporaryExchanges:temporaryResults.length,
-    current:structuredClone(lastContext?.currentState),committed:structuredClone(temporaryBase),persistence:memoryMode==='temporary'?'session-local; not saved':'durable mode; see verified commit receipt',
+    current:structuredClone(lastContext?.currentState),committed:structuredClone(temporaryBase),recentPlus:structuredClone(consolidated.get(currentScope)??null),recentPlusSourceReferences:[...(consolidationOrigins.get(currentScope)??new Map())].map(([source,originalSources])=>({source,originalSources:[...originalSources]})),persistence:memoryMode==='temporary'?'session-local; not saved':'durable mode; see verified commit receipt',
     diagnostics:{...diagnostic,turnSequence:sequence,recentMessages:recent.length,turnsSinceCheckpoint,turnsSinceInterval:intervalTurns},review:{unreviewedSources:pendingEvidence.length,pendingSources:pendingEvidence.map(e=>e.source),pendingCommit:pendingReviewCommit,last:structuredClone(artifacts.filter(a=>a.scopeId===currentScope).at(-1)??null),artifacts:structuredClone(artifacts.filter(a=>a.scopeId===currentScope).slice(-20)),observations:structuredClone(observations.get(currentScope)??[])}};}
   const addEvidence=items=>{pendingEvidence=[...new Map([...pendingEvidence,...items].map(e=>[e.source,structuredClone(e)])).values()];};
   function reviewRequest(context,user,triggers,reviewOnly=false){
     if(!semantic)return context;
     const lookup=!!(context.lookupProject||context.projectEvidenceRead),key=context.currentState.scopeId;
     const checkpoint=triggers.some(t=>t!=='per_turn');
-    const checkpointEvidence=checkpoint?sessionResults.filter(r=>r.turn.scopeId===key).slice(-20).flatMap(r=>[r.turn.user,r.turn.aida]):[];
+    const checkpointEvidence=checkpoint&&!consolidation?sessionResults.filter(r=>r.turn.scopeId===key).slice(-20).flatMap(r=>[r.turn.user,r.turn.aida]):[];
     const evidence=lookup?[user]:[...new Map([...checkpointEvidence,...recent,...pendingEvidence,...(reviewOnly?[]:[user])].map(e=>[e.source,structuredClone(e)])).values()];
     if(evidence.length>64||JSON.stringify(evidence).length>28000)throw Object.assign(Error('Pending review evidence is at its bounded limit. Retry the review before continuing; evidence is retained.'),{diagnostic:'memory_review_capacity'});
-    return{...context,memoryReview:{version:1,id:crypto.randomUUID(),scopeId:key,triggers,reviewOnly,evidence,sources:evidence.map(e=>e.source),priorObservations:structuredClone(observations.get(key)??[]).slice(-12)},sessionDiagnostics:{...diagnostic,turnSequence:sequence+(reviewOnly?0:1),recentMessages:recent.length,turnsSinceCheckpoint}};
+    const previous=consolidated.get(key)??{scopeId:key,revision:0,entries:[]};
+    const retiring=consolidation&&!lookup?recent.slice(0,-(reviewOnly?recentLimit:recentLimit-2)):[];
+    return{...context,...(consolidation?{promptPolicy:{version:1},recentPlus:structuredClone(previous),...(retiring.length?{consolidation:{id:crypto.randomUUID(),scopeId:key,baseRevision:previous.revision,previous:structuredClone(previous),retiring:structuredClone(retiring)}}:{})}:{}),memoryReview:{version:1,id:crypto.randomUUID(),scopeId:key,triggers,reviewOnly,evidence,sources:evidence.map(e=>e.source),priorObservations:structuredClone(observations.get(key)??[]).slice(-12)},sessionDiagnostics:{...diagnostic,turnSequence:sequence+(reviewOnly?0:1),recentMessages:recent.length,turnsSinceCheckpoint}};
   }
   function acceptArtifact(response,context,receipt,{lookup=false,checkpoint=false}={}){
     if(!semantic)return;
@@ -152,6 +170,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
     artifacts.push(artifact);lastEvaluation=artifact;
     diagnostic.lastAttempt={scopeId:key,status:receipt.semanticStatus,phase:context.memoryReview.reviewOnly?'checkpoint':'ordinary_turn'};
     if(evaluation.decision==='deferred'||lookup)return;
+    if(context.consolidation){const plan=consolidationPlan(response,context);consolidated.set(key,plan.next);consolidationOrigins.set(key,plan.origins);}
     if(receipt.semanticStatus==='not_permitted'){pendingEvidence=[];return;}
     const previous=observations.get(key)??[],next=[...previous];
     for(const item of evaluation.observations){
@@ -224,7 +243,9 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const envelope={version:conversationVersion,identity:{...identity},memory:{long:[],short:[],facts:[],insights:[],recent:[]},affect:{...affect},environment:{tools:[],recentStorage:'session-local-review-evidence'},user,context};
         // Raw evidence has one channel; do not duplicate it in the current package.
         const request=structuredClone(envelope);request.context.currentState.conversation=[];if(request.context.globalState)request.context.globalState.conversation=[];
-        const response=parseConversationResponse(await provider(request),request);
+        const projected=projectPrompt(request);
+        const response=parseConversationResponse(await provider(projected),projected);
+        if(!response.skillRequest)consolidationPlan(response,context);
         if(memoryMode==='durable'&&!sessionResults.length&&response.awake.evaluation.decision==='change')throw Object.assign(Error('A changed review requires an eligible completed exchange before durable persistence; evidence retained.'),{diagnostic:'memory_review_source'});
         const receipt=await steward.apply(envelope,response.awake,true);
         const now=new Date().toISOString(),result={envelope,response,receipt,reviewOnly:true,turn:{turnId:context.memoryReview.id,completedAt:now,user,aida:{source:'review-output:'+context.memoryReview.id,role:'aida',text:response.reply}}};
@@ -353,7 +374,7 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
           let raw;
           try {
             const request=structuredClone(envelope);
-            if(request.context?.globalState){
+            if(request.context?.globalState&&!consolidation){
               request.context.globalState.facts=[...request.context.globalState.facts,...request.memory.facts];
               if(request.context.currentState.scopeId==='everyday')request.context.currentState.facts=structuredClone(request.context.globalState.facts);
               for(const continuity of [request.context.global,request.context.activeProject?.continuity,request.context.lookupProject?.continuity])if(continuity){delete continuity.livingMind;delete continuity.review;}
@@ -364,11 +385,14 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
               const strip=value=>{if(!value||typeof value!=='object')return;for(const key of Object.keys(value))if(key==='conversation')value[key]=[];else strip(value[key]);};strip(request.context);
             }
             if(request.context?.memoryReview){request.memory.recent=[];request.context.currentState.conversation=[];if(request.context.globalState)request.context.globalState.conversation=[];}
-            requestContext=structuredClone(request.context);
-            raw = await provider(request, visual?.image);
-            return parseConversationResponse(raw,request);
+            const projected=projectPrompt(request);
+            requestContext=structuredClone(projected.context);
+            raw = await provider(projected, visual?.image);
+            const parsed=parseConversationResponse(raw,projected);
+            if(!parsed.skillRequest)consolidationPlan(parsed,context);
+            return parsed;
           } catch (error) {
-            if (error instanceof ConversationTransportError || error instanceof ConversationValidationError) throw error;
+            if (error instanceof ConversationTransportError || error instanceof ConversationValidationError || error.diagnostic==='prompt_budget') throw error;
             throw new Error("The conversation provider failed. Try again.");
           }
         }
@@ -411,8 +435,11 @@ export function createConversationSession({ memoryStore, provider, recoveredTurn
         const result={ envelope, response, receipt, requestContext,turn: { turnId, order, startedAt, completedAt: new Date().toISOString(), user, aida,...(context?{scopeId:currentScope}:{}) } };
         if(semantic&&permitted&&!receipt.preview&&!context.lookupProject&&!context.projectEvidenceRead){
           if(!deferred)applyWorking(envelope,response,receipt,result);
-          if(memoryMode==='temporary')temporaryResults.push(result);
-          sessionResults.push(result);
+          // Retain original exchanges/receipts for explicitly authorized preservation,
+          // not a quadratic archive of every frozen prompt and its earlier evidence.
+          const retained=consolidation?{turn:result.turn,receipt:result.receipt,response:{affect:result.response.affect},envelope:{user:result.envelope.user,memory:{...result.envelope.memory,recent:[]},context:{currentProjectId:result.envelope.context.currentProjectId}}}:result;
+          if(memoryMode==='temporary')temporaryResults.push(retained);
+          sessionResults.push(retained);
         }
         if(context?.lookupProject||context?.projectEvidenceRead)currentScope=scopeId(steward.activeProjectId);
         result.memoryStatus=status();return result;
