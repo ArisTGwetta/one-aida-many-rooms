@@ -76,7 +76,7 @@ export function scopeAllowed(item, envelope) {
   return item.sources.length>0&&item.sources.every(ref=>approved.has(ref));
 }
 export function checkpointEligible(result, chosen) {
-  if(result.receipt?.semanticStatus==='deferred')return false;
+  if(['deferred','pending'].includes(result.receipt?.semanticStatus))return false;
   if(['excluded','provisional'].includes(chosen)||result.receipt?.outcome?.status==='excluded'||result.envelope.visualEvidence) return false;
   if(!result.receipt||result.receipt.preview||result.envelope.context.lookupProject||result.envelope.context.projectEvidenceRead) return false;
   // Conservative fallback for known disposable consultations. A model cannot turn

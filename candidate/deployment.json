@@ -1,9 +1,9 @@
 {
   "slot": "CANDIDATE",
-  "sourceCommit": "282d12ecbfcb21d924beaed71fad7ab8ca81a83a",
-  "status": "Focused revision-delta and steward-diagnostic repair; awaiting live acceptance",
+  "sourceCommit": "6eced8a4dec3099bc14723ba1012f093e7b75bbb",
+  "status": "Independent conversation acceptance with scoped pending memory; live acceptance pending",
   "runtimeFiles": 68,
   "promotionRequires": "Explicit user acceptance",
-  "tests": "200/200 offline; natural correction at first consolidation boundary verified synthetically",
+  "tests": "206/206 offline; failed correction/consolidation, reply/affect continuity and independent review verified synthetically",
   "currentSourceCommit": "c1c6fb59191d9c40f2e77eb15233cba6da54593a"
 }

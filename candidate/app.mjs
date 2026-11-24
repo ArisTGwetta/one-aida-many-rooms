@@ -92,7 +92,7 @@ async function setupChat(folderId) {
   function refreshMindInspector(){
     const state=session?.memoryStatus;if(!state)return;
     byId('mind-inspector-status').textContent=`${state.scopeId} · ${state.mode} · committed revision ${state.committedRevision}; working meaning revision ${state.current?.meaningRevision??0} · ${state.review.last?.status??'not evaluated'} · ${state.review.unreviewedSources} unreviewed source(s)`;
-    byId('mind-inspector-state').textContent=JSON.stringify({activeScope:state.scopeId,mode:state.mode,stateKind:state.mode==='temporary'?'temporary working understanding; not saved':'durable working understanding; see verified commit',committedVersion:state.committedRevision,workingMeaningRevision:state.current?.meaningRevision,long:state.current?.long,short:state.current?.short,orientation:state.current?.orientation,recentPlus:state.recentPlus,recentPlusSourceReferences:state.recentPlusSourceReferences,lastMemoryEvaluation:state.review.last,provisionalObservations:state.review.observations,persistence:state.persistence,lastVerifiedCommit:mindEvidence.committed??mindEvidence.review_checkpoint?.committed??mindEvidence.session_ended?.verified??mindEvidence.handoff?.verified??null,diagnostics:state.diagnostics,pendingSources:state.review.pendingSources},null,2);
+    byId('mind-inspector-state').textContent=JSON.stringify({activeScope:state.scopeId,mode:state.mode,stateKind:state.mode==='temporary'?'temporary working understanding; not saved':'durable working understanding; see verified commit',committedVersion:state.committedRevision,workingMeaningRevision:state.current?.meaningRevision,long:state.current?.long,short:state.current?.short,orientation:state.current?.orientation,pendingMemory:state.review.pendingWork,pendingMemoryScopes:state.review.pendingScopes,recentPlus:state.recentPlus,recentPlusSourceReferences:state.recentPlusSourceReferences,lastMemoryEvaluation:state.review.last,provisionalObservations:state.review.observations,persistence:state.persistence,lastVerifiedCommit:mindEvidence.committed??mindEvidence.review_checkpoint?.committed??mindEvidence.session_ended?.verified??mindEvidence.handoff?.verified??null,diagnostics:state.diagnostics,pendingSources:state.review.pendingSources},null,2);
   }
   function mindTrace(phase,value){if(phase==='checked_out')mindEvidence={};mindEvidence[phase]=value;byId('mind-trace').textContent=JSON.stringify({phase,...mindEvidence},null,2);refreshMindInspector();}
   function mindContext(context){
@@ -429,7 +429,7 @@ async function setupChat(folderId) {
     session = createConversationSession({
       memoryStore: store,
       steward: (steward = createAwakeSteward(contextSource, { recoveredTurns: byId('mind-state-only').checked?[]:turns, skills,sessionId:livingSessionId })),
-      mode:conversationMode,stateStore:contextSource,consolidation:true,
+      mode:conversationMode,stateStore:contextSource,consolidation:true,independentMemory:true,
       sessionId:`${livingSessionId}:${++conversationEpoch}`,conversationId:id,resetReason:reason,
       async archiveTurns(results){
         for(const result of results){
@@ -659,7 +659,7 @@ async function setupChat(folderId) {
       } }));
       const needsCheckpoint = conversationMode==='durable'&&checkpointEligible(result,chosenDisposition);
       byId('mind-scope').value=result.envelope.context.currentProjectId??'';
-      mindTrace('proposed',{scopeId:result.turn.scopeId,mode:conversationMode,modelRequest:result.requestContext,previous:result.envelope.context.currentState,after:result.memoryStatus.current,proposed:result.receipt.proposed??[],validation:result.receipt.rejected??[],evaluation:result.receipt.evaluation??null,semanticStatus:result.receipt.semanticStatus??'legacy',noUnderstandingChange:result.receipt.evaluation?.decision==='no_change',longShortUnchanged:JSON.stringify([result.envelope.context.currentState.long,result.envelope.context.currentState.short])===JSON.stringify([result.memoryStatus.current.long,result.memoryStatus.current.short]),personalFactsProposed:result.receipt.candidates?.filter(c=>c.layer==='facts'&&c.scope==='global').length??0,reviewOutcome:result.receipt.evaluation?.outcome,provisionalObservations:result.receipt.evaluation?.observations??[],persistence:needsCheckpoint?'pending':conversationMode==='temporary'?'session-local; not saved or archived':'no durable change',diagnostics:result.memoryStatus.diagnostics});
+      mindTrace('proposed',{scopeId:result.turn.scopeId,mode:conversationMode,modelRequest:result.requestContext,previous:result.envelope.context.currentState,after:result.memoryStatus.current,proposed:result.receipt.proposed??[],validation:result.receipt.rejected??[],evaluation:result.receipt.evaluation??null,semanticStatus:result.receipt.semanticStatus??'legacy',noUnderstandingChange:result.memoryPending?null:result.receipt.evaluation?.decision==='no_change',longShortUnchanged:JSON.stringify([result.envelope.context.currentState.long,result.envelope.context.currentState.short])===JSON.stringify([result.memoryStatus.current.long,result.memoryStatus.current.short]),personalFactsProposed:result.receipt.candidates?.filter(c=>c.layer==='facts'&&c.scope==='global').length??0,reviewOutcome:result.receipt.evaluation?.outcome,provisionalObservations:result.receipt.evaluation?.observations??[],persistence:needsCheckpoint?'pending':conversationMode==='temporary'?'session-local; not saved or archived':'no durable change',diagnostics:result.memoryStatus.diagnostics});
       disposition = needsCheckpoint && chosenDisposition === 'ephemeral' ? 'candidate' : chosenDisposition;
       preceding = { turn, disposition };
       sources = [turn.user.source, turn.aida.source];
@@ -667,7 +667,7 @@ async function setupChat(folderId) {
       byId("conversation-evidence").textContent = JSON.stringify({
         ...providerCalls.at(-1), providerCalls, driveEvidence: result.envelope.memory.facts.map(({ source, recordId, savedAt, destination, proposalId, reviewId, sources }) =>
           ({ source, recordId, savedAt, destination, proposalId, reviewId, sources })),
-        recentMessageCount: result.envelope.memory.recent.length, response: result.response,
+        memoryAcceptance:result.memoryPending??{status:result.receipt.semanticStatus}, recentMessageCount: result.envelope.memory.recent.length, response: result.response,
         awakeContext: { projectId: result.envelope.context.currentProjectId, references: result.envelope.context.references },
         projectRead: result.envelope.context.projectRead ? {
           ...result.envelope.context.projectRead,
@@ -687,7 +687,7 @@ async function setupChat(folderId) {
       byId("conversation-evidence-label").textContent = "Development evidence";
       if (message.value === submitted) message.value = "";
       retention.value = "auto";
-      if (conversationMode==='durable'&&(disposition === "candidate" || disposition === "provisional")) {
+      if (!result.memoryPending&&conversationMode==='durable'&&(disposition === "candidate" || disposition === "provisional")) {
         if (needsCheckpoint) pending = { result,turn,disposition,supportingTurn };
         else {
           const receipt = journalReceipt(result, supportingTurn);
@@ -707,11 +707,12 @@ async function setupChat(folderId) {
           return `Reply received. Journal save unconfirmed. ${error.message}`;
         }
       } else {
-        journalStatus.textContent = disposition === "excluded"
+        journalStatus.textContent = result.memoryWarning??(disposition === "excluded"
           ? "Exchange excluded from future context and Drive."
-          : conversationMode==='temporary'?"Just chatting: working understanding evolved locally; no Drive memory or archive write.":"No meaningful memory change; no archive write.";
+          : conversationMode==='temporary'?"Just chatting: working understanding evolved locally; no Drive memory or archive write.":"No meaningful memory change; no archive write.");
       }
       const outcome = result.receipt.outcome.status;
+      if(result.memoryWarning)return result.memoryWarning;
       return {
         project_selected: "Project continuity loaded and room selected.",
         project_looked_up: "Project continuity retrieved.",

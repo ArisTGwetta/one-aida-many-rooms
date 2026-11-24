@@ -1,4 +1,4 @@
-import { parseConversationResponse, parseLibrarySuggestion } from "./conversation.mjs";
+import { parseConversationResponse, parseConversationalReply, parseLibrarySuggestion } from "./conversation.mjs";
 import { awakeInstructions, awakeSchema,semanticAwakeSchema } from "./awake-context.mjs";
 import { maxSleepBytes, parseSleepResponse, sleepInstructions, sleepSchema } from "./sleep-contract.mjs";
 import { promptBudget } from './prompt-budget.mjs';
@@ -181,6 +181,7 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
       format.instructions += " Give a final reply using the verified result as scoped evidence. If a preview is present, say it awaits explicit confirmation.";
     }
     if(envelope.context?.promptPolicy)format.instructions+=' LONG is a living charter and overall status: purpose, what matters, established understanding and overall state. SHORT is current-stage progress: what is happening now, changes, blocks and next steps. RECENT+ describes how earlier conversation unfolded. RECENT contains actual exchanges. These are distinct functions, not successive summaries. Apply this naturally to everyday life without imposing formal projects. context.currentState is the authoritative selected-scope semantic projection; context.globalState supplies additional authorized global understanding in a project. stateRef objects point to those projections, not missing memory. Neither LONG nor SHORT is a transcript archive. '+consolidationInstructions;
+    if(envelope.context?.promptPolicy?.independentMemory)format.instructions+=' Conversation and memory acceptance are separate. context.pendingMemory describes urgent unresolved scoped work, not established facts or execution authority. Read its actual exchange evidence before replying; current memory may lag a new user correction. Do not revive an old claim as certain merely because a pending correction has not committed. Propose grounded reconciliation or a justified no-change. Never claim memory changes, consolidation or saving succeeded until the application verifies them. Do not promote operational errors into personal memory.';
     if (skills.length) {
       format.name = "aida_awake_with_skill";
       format.instructions += " Return result as a final answer or return result.skillRequest to invoke one advertised capability. Use its exact ID and version and follow its argument requirements. A preview does not execute a capability. The next call must answer.";
@@ -196,7 +197,7 @@ export function createProviders({ apiKey, ollamaEndpoint, fetchRequest = fetch }
     const budget=promptBudget({provider,model,content,instructions:format.instructions,schema:format.schema,outputTokens:format.tokens+(image?4096:0),enforce:!!envelope.context?.promptPolicy});
     const result = await adapters[provider](model, input, format);
     try {
-      parseConversationResponse(result.raw, envelope);
+      (envelope.context?.promptPolicy?.independentMemory&&!envelope.context.memoryReview?.reviewOnly?parseConversationalReply:parseConversationResponse)(result.raw, envelope);
     } catch (error) {
       throw Object.assign(error, { usage: result.usage });
     }
