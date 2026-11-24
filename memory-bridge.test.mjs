@@ -88,22 +88,22 @@ async function stage(client,result,choice='auto') {
 }
 async function commit(client,pending){const saved=await client.journal.save(pending);return client.source.commitCheckpoint(pending.checkpoint,'drive:'+saved.fileId);}
 
-async function ordinaryChat(f,propose,{mode='temporary',mutateResponse,consolidation=false,canonicalFacts=async()=>[],bindings=[]}={}){
-  const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8'),client=f.open(),requests=[],exchanges=[],budgets=[],nodes=new Map();let completed;
-  const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,hidden:false,textContent:'',handlers:{},addEventListener(name,action){this.handlers[name]=action;},dispatchEvent(){},setAttribute(){}});return nodes.get(id);};
-  const sandbox={byId:get,conversationId,conversationMode:mode,providerCalls:[],selection:{provider:'openai',model:'gpt-6-luna'},pending:undefined,preceding:undefined,sources:[],disposition:'ephemeral',support:get('journal-support'),retention:get('retention'),message:get('message'),send:get('send'),transcript:get('transcript'),details:get('conversation-details'),journalStatus:get('journal-status'),chatStatus:get('chat-status'),projectData:get('project-preview-data'),projectStatus:get('project-save-status'),projectPanel:get('project-preview'),palace:{conversationEvidence:()=>undefined},glasses:{snapshot:()=>undefined},chatt:{offer(){}},localDevelopment:false,select:{value:'openai'},appendExchange:t=>exchanges.push(t),showBudget(){},showJournalContext(){},clearProjectPreview(){},prepareSelection:async()=>({provider:'openai',model:'gpt-6-luna'}),run:(_label,action)=>{completed=Promise.resolve().then(action);return completed;},CustomEvent:class{},Date,JSON,Error,dispositionFor,availableSupport:()=>undefined,visualReceipt:()=>undefined,checkpointEligible,journalReceipt,makeJournalEvent,contextSource:client.source,journal:client.journal};
+async function ordinaryChat(f,propose,{mode='temporary',mutateResponse,consolidation=false,independentMemory=false,canonicalFacts=async()=>[],bindings=[]}={}){
+  const app=await readFile(new URL('./app.mjs',import.meta.url),'utf8'),client=f.open(),requests=[],exchanges=[],budgets=[],events=[],nodes=new Map();let completed;
+  const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,hidden:false,textContent:'',handlers:{},addEventListener(name,action){this.handlers[name]=action;},dispatchEvent(event){events.push(event);},setAttribute(){}});return nodes.get(id);};
+  const sandbox={byId:get,conversationId,conversationMode:mode,providerCalls:[],selection:{provider:'openai',model:'gpt-6-luna'},pending:undefined,preceding:undefined,sources:[],disposition:'ephemeral',support:get('journal-support'),retention:get('retention'),message:get('message'),send:get('send'),transcript:get('transcript'),details:get('conversation-details'),journalStatus:get('journal-status'),chatStatus:get('chat-status'),projectData:get('project-preview-data'),projectStatus:get('project-save-status'),projectPanel:get('project-preview'),palace:{conversationEvidence:()=>undefined},glasses:{snapshot:()=>undefined},chatt:{offer(){}},localDevelopment:false,select:{value:'openai'},appendExchange:t=>exchanges.push(t),showBudget(){},showJournalContext(){},clearProjectPreview(){},prepareSelection:async()=>({provider:'openai',model:'gpt-6-luna'}),run:(_label,action)=>{completed=Promise.resolve().then(action);return completed;},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail;}},Date,JSON,Error,dispositionFor,availableSupport:()=>undefined,visualReceipt:()=>undefined,checkpointEligible,journalReceipt,makeJournalEvent,contextSource:client.source,journal:client.journal};
   const invoke=createProviders({apiKey:'synthetic-key',fetchRequest:async(url,options)=>{
     assert.equal(url,'https://api.openai.com/v1/responses');const body=JSON.parse(options.body),e=JSON.parse(body.input);requests.push(body);const proposed=propose(e);
     const reply={version:'0.2',reply:'Synthetic ordinary Chat reply.',intent:'conversation',route:'reply',affect:e.affect,candidates:{facts:[],insights:[],short:[],long:[]},tools:[],awake:{action:{kind:'just_keep_talking',target:null,arguments:[],sources:[],uncertainty:null},rebuild:null,changes:[],candidates:[],contradictions:[],...semanticFields(e,proposed)}};
     return Response.json({status:'completed',model:'gpt-6-luna',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({result:mutateResponse?mutateResponse(reply,e):reply})}]}],usage:{input_tokens:10,output_tokens:10}});
   }});
-  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat',skills:projectSkills(client.source,bindings)}),stateStore:client.source,mode,consolidation,loadCanonicalFacts:canonicalFacts,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});budgets.push(r.promptBudget);sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage,promptBudget:r.promptBudget,status:'completed'});return r.raw;}});
+  sandbox.session=createConversationSession({steward:createAwakeSteward(client.source,{sessionId:'ordinary-chat',skills:projectSkills(client.source,bindings)}),stateStore:client.source,mode,consolidation,independentMemory,loadCanonicalFacts:canonicalFacts,sessionId:'ordinary-chat',conversationId,memoryStore:{recall:async()=>null},provider:async e=>{const r=await invoke({provider:'openai',model:'gpt-6-luna',envelope:e});budgets.push(r.promptBudget);sandbox.providerCalls.push({purpose:'offline_ordinary_chat',provider:'openai',model:r.model,usage:r.usage,promptBudget:r.promptBudget,status:'completed'});return r.raw;}});
   const inspect=app.slice(app.indexOf('  function refreshMindInspector(){'),app.indexOf('  function mindTrace('));
   const trace=app.slice(app.indexOf('  function mindTrace('),app.indexOf('  function mindContext('));
   const save=app.slice(app.indexOf('  async function savePending() {'),app.indexOf('\n  byId("journal-resume")'));
   const handler=app.slice(app.indexOf('  byId("chat-form").addEventListener("submit"'),app.indexOf('\n  return async () => {'));
   runInNewContext(`let mindEvidence={};${inspect}${trace}${save}${handler}`,sandbox);
-  return{client,session:sandbox.session,requests,exchanges,budgets,get,async send(text){get('message').value=text;get('chat-form').handlers.submit({preventDefault(){}});return completed;}};
+  return{client,session:sandbox.session,requests,exchanges,budgets,events,get,async send(text){get('message').value=text;get('chat-form').handlers.submit({preventDefault(){}});return completed;}};
 }
 test('normal awake updates checkpoint one current global LONG/SHORT/RECENT and survive outside the journal recovery window',async()=>{
   const f=fixture(),client=f.open();const c=chat(client.source,e=>e.user.text==='We approved the new plan.'?{rebuild:'meaningful_event',changes:['long','short','recent'].map(layer=>change(e,'global',layer,layer+' current plan','EXPAND',[unit(layer+'-plan','A synthetic approved plan.',e.user.source)]))}:{});
@@ -906,4 +906,70 @@ test('revision validation distinguishes unknown, duplicate and evidence-free tar
     [{operation:'REVISE',meaning:[unit('new','No replacement target.','new-source')]},'target_required']
   ];
   for(const [proposal,code] of cases){const before=structuredClone(old);assert.throws(()=>evolve(old,{scope:'global',layer:'short',text:'Synthetic view.',...proposal},'next'),error=>{assert.equal(error.diagnostic,'memory_revision_'+code);assert.ok(!JSON.stringify(error.diagnosticDetails).includes('old-source'));return true;});assert.deepEqual(old,before);}
+});
+
+test('valid fourth-turn correction and affect survive failed memory; pending evidence reaches later conversation and independent review',async()=>{
+  for(const failure of ['semantic','consolidation']){
+    const f=fixture();let failures=true;
+    const ui=await ordinaryChat(f,e=>{
+      const n=e.context.sessionDiagnostics.turnSequence;
+      if(e.context.memoryReview.reviewOnly){const correction=e.context.memoryReview.evidence.find(v=>v.role==='user'&&v.text.includes('Ambassador'));return{changes:[change({...e,user:correction},'global','short','Chaos is Ambassador; office by kitchen; twelve cans annually.','REVISE',[unit('ambassador','The reported title is Ambassador, not Minister.',correction.source,'claim','minister')])]};}
+      if(n===1)return{changes:[change(e,'global','short','Chaos is Minister of Sardines.','EXPAND',[unit('minister','Reported title is Minister.',e.user.source,'claim')])]};
+      if(n===2)return{changes:[change(e,'global','short','Minister; office by kitchen.','EXPAND',[unit('office','Office by kitchen.',e.user.source,'claim')])]};
+      if(n===3)return{changes:[change(e,'global','short','Minister; office by kitchen; twelve cans annually.','EXPAND',[unit('salary','Salary twelve cans annually.',e.user.source,'claim')])]};
+      if(n===4)return{changes:[change(e,'global','short','Ambassador; office by kitchen; twelve cans annually.','REVISE',[unit('ambassador','Reported title is Ambassador.',e.user.source,'claim',failures&&failure==='semantic'?'nonexistent-target':'minister')])]};
+      return{};
+    },{consolidation:true,independentMemory:true,mutateResponse:(r,e)=>{
+      if(e.context.consolidation)r.consolidation=scriptedConsolidation(e.context.consolidation);
+      if(!e.context.memoryReview.reviewOnly&&e.context.sessionDiagnostics.turnSequence>=4){r.reply='I understand your correction to Ambassador. We can keep discussing it.';r.affect={valence:0.7,arousal:0.5,label:'warm',expression:null};if(failures&&e.context.sessionDiagnostics.turnSequence===4&&failure==='consolidation')r.consolidation.entries[0].sources=['fabricated:source'];if(failures&&e.context.sessionDiagnostics.turnSequence===5)r.awake.evaluation.reason='';}
+      return r;
+    }});
+    for(const text of ['Chaos has been appointed Minister of Sardines.','His office will be next to the kitchen.','His annual salary is twelve cans of sardines.'])await ui.send(text);
+    const before=structuredClone(ui.session.memoryStatus.current);
+    const notice=await ui.send('Actually, his correct title is Ambassador of Sardines, not Minister.');assert.match(notice,/keep talking|difficulty updating memory/);
+    assert.equal(ui.exchanges.length,4);assert.equal(ui.events.filter(v=>v.type==='aida-affect').length,4);assert.equal(ui.events.filter(v=>v.type==='aida-affect').at(-1).detail.valence,0.7);assert.equal(ui.exchanges.at(-1).aida.text,'I understand your correction to Ambassador. We can keep discussing it.');assert.deepEqual(ui.session.memoryStatus.current,before);assert.equal(ui.session.memoryStatus.recentPlus,null);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,4);assert.equal(ui.session.memoryStatus.diagnostics.recentMessages,8);
+    const work=ui.session.memoryStatus.review.pendingWork;assert.equal(work.length,1);assert.equal(work[0].scopeId,'everyday');assert.ok(work[0].proposal.awake);assert.equal(work[0].diagnostic,failure==='semantic'?'memory_revision_target_missing':'recent_plus_sources_unknown');
+    await ui.send('Can we continue discussing his new title?');const next=JSON.parse(ui.requests.at(-1).input);assert.equal(next.affect.valence,0.7);assert.equal(next.context.pendingMemory[0].status,'unresolved');assert.ok(next.context.memoryReview.evidence.some(v=>v.role==='user'&&v.text.includes('correct title is Ambassador')));assert.ok(!JSON.stringify(next.context.pendingMemory).includes('nonexistent-target'));assert.deepEqual(ui.session.memoryStatus.current,before);assert.equal(ui.exchanges.length,5);assert.equal(ui.session.memoryStatus.review.pendingWork.length,2);
+    failures=false;const calls=ui.requests.length;await ui.session.review('explicit_review');assert.equal(ui.requests.length,calls+1);assert.equal(ui.exchanges.length,5);assert.equal(ui.session.memoryStatus.diagnostics.turnSequence,5);assert.equal(ui.session.memoryStatus.review.pendingWork.length,0);assert.equal(ui.session.memoryStatus.review.unreviewedSources,0);assert.ok(ui.session.memoryStatus.current.short[0].meaning.some(v=>v.id==='ambassador'&&v.replaces==='minister'));assert.ok(ui.session.memoryStatus.current.short[0].meaning.some(v=>v.id==='office'));assert.equal(ui.session.memoryStatus.diagnostics.recentMessages,6);
+    await ui.session.review('retry');assert.equal(ui.requests.length,calls+1);assert.equal(f.writes.length,0);
+  }
+});
+
+test('invalid conversational affect still fails closed, while pending memory can be explicitly discarded without a model or write',async()=>{
+  const f=fixture();let invalidAffect=false;
+  const ui=await ordinaryChat(f,()=>({}),{consolidation:true,independentMemory:true,mutateResponse:(r,e)=>{if(e.context.consolidation){r.consolidation=scriptedConsolidation(e.context.consolidation);r.consolidation.entries[0].sources=['unknown:source'];}if(invalidAffect)r.affect.valence=2;return r;}});
+  for(let n=0;n<4;n++)await ui.send('A temporary synthetic exchange '+n);
+  assert.equal(ui.session.memoryStatus.review.pendingWork.length,1);assert.equal(ui.exchanges.length,4);const before=structuredClone(ui.session.memoryStatus.current);invalidAffect=true;
+  await assert.rejects(ui.send('Malformed affect must not be accepted.'));assert.equal(ui.exchanges.length,4);assert.deepEqual(ui.session.memoryStatus.current,before);
+  const calls=ui.requests.length;const decision=await ui.session.endSession();assert.equal(decision.needsDecision,true);await ui.session.endSession('discard');assert.equal(ui.requests.length,calls);assert.equal(ui.session.memoryStatus.review.pendingWork.length,0);assert.equal(ui.session.memoryStatus.review.unreviewedSources,0);assert.equal(ui.session.memoryStatus.recentPlus,null);assert.equal(f.writes.length,0);
+});
+
+test('pending memory remains scoped and temporary; context capacity stops before a provider call without evidence loss',async()=>{
+  const f=fixture(),ui=await ordinaryChat(f,()=>({}),{consolidation:true,independentMemory:true,mutateResponse:(r,e)=>{if(e.context.consolidation){r.consolidation=scriptedConsolidation(e.context.consolidation);r.consolidation.entries[0].sources=['unknown:source'];}return r;}});
+  await ui.session.enterScope('atlas');
+  let stopped=false;
+  for(let n=0;n<35;n++){
+    const state=structuredClone(ui.session.memoryStatus),calls=ui.requests.length;
+    try{await ui.send(('PRIVATE_SYNTHETIC_ROOM pending exchange '+n+' ').padEnd(500,'x'));}
+    catch(error){assert.ok(['memory_review_capacity','prompt_budget'].includes(error.diagnostic));assert.equal(ui.requests.length,calls);assert.deepEqual(ui.session.memoryStatus.current,state.current);assert.deepEqual(ui.session.memoryStatus.recentPlus,state.recentPlus);assert.ok(state.review.pendingSources.every(v=>ui.session.memoryStatus.review.pendingSources.includes(v)));stopped=true;break;}
+  }
+  assert.equal(stopped,true);assert.ok(ui.session.memoryStatus.review.pendingWork.length>0);assert.ok(ui.session.memoryStatus.review.pendingWork.every(w=>w.scopeId==='project:atlas'));await assert.rejects(ui.session.enterScope(null),/Resolve or discard/);
+  const calls=ui.requests.length;await ui.session.endSession('discard');assert.equal(ui.requests.length,calls);assert.equal(ui.session.memoryStatus.review.pendingWork.length,0);await ui.session.enterScope(null);await ui.send('An unrelated everyday question.');assert.ok(!JSON.stringify(ui.requests.at(-1)).includes('PRIVATE_SYNTHETIC_ROOM'));assert.equal(ui.session.memoryStatus.review.pendingWork.length,0);assert.equal(f.writes.length,0);
+});
+
+test('pending memory cannot trigger a candidate journal or checkpoint write in durable mode',async()=>{
+  const f=fixture(),ui=await ordinaryChat(f,()=>({}),{mode:'durable',consolidation:true,independentMemory:true,mutateResponse:(r,e)=>{if(e.context.consolidation){r.consolidation=scriptedConsolidation(e.context.consolidation);r.consolidation.entries[0].sources=['unknown:source'];}return r;}});
+  for(let n=0;n<3;n++)await ui.send('Synthetic unchanged conversation '+n);const writes=f.writes.length;ui.get('retention').value='candidate';await ui.send('A synthetic unresolved correction.');assert.equal(ui.exchanges.length,4);assert.equal(ui.session.memoryStatus.review.pendingWork.length,1);assert.equal(f.writes.length,writes);assert.match(ui.get('journal-status').textContent,/not been saved/);
+});
+
+test('excluded conversation can survive memory failure without retaining its evidence or pending proposal',async()=>{
+  const f=fixture(),ui=await ordinaryChat(f,()=>({}),{consolidation:true,independentMemory:true,mutateResponse:r=>{r.awake.evaluation.reason='';return r;}});
+  ui.get('retention').value='excluded';await ui.send('Do not remember this synthetic excluded content.');assert.equal(ui.exchanges.length,1);assert.equal(ui.session.memoryStatus.review.pendingWork.length,0);assert.equal(ui.session.memoryStatus.review.unreviewedSources,0);assert.equal(ui.session.recentTurnCount,0);assert.equal(f.writes.length,0);
+});
+
+test('failed lookup memory keeps private project evidence out of subsequent Everyday requests',async()=>{
+  const f=fixture(),ui=await ordinaryChat(f,()=>({}),{consolidation:true,independentMemory:true,mutateResponse:(r,e)=>{if(e.context.lookupProject){r.reply='PRIVATE_SYNTHETIC_LOOKUP_DETAILS';r.awake.evaluation.reason='';}return r;}});
+  await ui.send('What is the Atlas situation?');assert.equal(ui.exchanges.length,1);assert.ok(ui.session.memoryStatus.review.pendingScopes.includes('project:atlas'));
+  await ui.send('An unrelated Everyday question.');const next=JSON.parse(ui.requests.at(-1).input);assert.equal(next.context.currentState.scopeId,'everyday');assert.ok(!JSON.stringify(next).includes('PRIVATE_SYNTHETIC_LOOKUP_DETAILS'));assert.deepEqual(next.context.pendingMemory,[]);assert.ok(ui.session.memoryStatus.review.pendingScopes.includes('project:atlas'));
+  const calls=ui.requests.length;await ui.session.endSession('discard');assert.equal(ui.requests.length,calls);assert.deepEqual(ui.session.memoryStatus.review.pendingScopes,[]);assert.equal(f.writes.length,0);
 });

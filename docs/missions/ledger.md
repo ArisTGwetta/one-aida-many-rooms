@@ -150,3 +150,40 @@ replacement provenance. All revision rejection branches remain fail-closed. Full
 regression result: 200/200 offline. CANDIDATE-only publication authorized; CURRENT
 unchanged. No paid calls or live Drive writes. Actual model behavior remains a live
 gate; this repair does not prove which invalid proposal the original model returned.
+
+### Conversation acceptance independent of memory acceptance — November 23
+
+Ordinary Chat now independently validates the reply, intent/route, affect and tool
+proposal boundary. Strict complete memory validation remains a separate step.
+Invalid JSON, invalid conversational affect and unauthorized tool proposals still
+fail closed. Older module callers keep their existing strict composite boundary;
+the ordinary app explicitly enables independent acceptance. No extra model call is
+added to a normal turn and no invalid memory is silently rewritten as valid.
+
+A failed semantic update or consolidation preserves the previous valid structured
+memory/RECENT+, accepts the actual exchange and affect, and records scoped urgent
+pending work with the original proposals, diagnostic and source references. Only
+unresolved metadata plus actual conversation evidence reach the next request; raw
+invalid proposals do not become instructions or facts. The user sees a natural
+memory-pending notice and can inspect the pending work. Pending evidence is kept
+separately per scope, including lookup results, so private room content cannot spill
+into Everyday prompts. Whole-proposal acceptance remains atomic under the existing
+steward's staged validation; execution/Drive authority is unchanged.
+
+The existing Review action re-evaluates pending evidence against current state and
+reconciles it without appending a conversation turn or re-emitting its affect. Only
+validated, nondeferred coverage resolves pending work and releases old prompt
+material. Context/session budgets stop safely before transport if recovery is needed.
+Temporary pending work has no durable store; explicit discard clears it without a
+provider call or write. Excluded content is not queued. Pending memory cannot trigger
+a journal/checkpoint write, even under candidate retention; normal persistence
+resumes only through existing validated/authorized paths. Existing durable write
+conflict and readback protections remain in place.
+
+206/206 offline regressions pass. Production-path tests cover the natural fourth-turn
+correction with semantic or consolidation rejection, valid reply/affect display,
+subsequent conversation over unresolved evidence, independent reconciliation without
+duplicate turns, invalid conversational affect, explicit discard, capacity recovery,
+project/global isolation, durable pending-write suppression and excluded content.
+No paid calls or live Drive writes were performed. Actual model/live acceptance
+remains open. CURRENT is unchanged; publication is restricted to existing CANDIDATE.
